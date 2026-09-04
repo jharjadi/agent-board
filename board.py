@@ -434,6 +434,8 @@ def render_board_html(root: str) -> str:
         "<script>setInterval(function(){"
         "var a=document.activeElement;"
         "if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;"
+        "var f=document.querySelectorAll('input[type=text],input:not([type]),textarea');"
+        "for(var i=0;i<f.length;i++){if(f[i].value.trim())return;}"
         "location.reload();},3000);</script>"
         "<title>agent-board</title><style>%s</style></head><body>"
         "<h1>agent-board</h1><div class='cols'>%s</div>"

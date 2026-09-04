@@ -690,6 +690,12 @@ class TestRefreshAndPort(unittest.TestCase):
         self.assertIn("TEXTAREA", page)
         self.assertIn("INPUT", page)
 
+
+    def test_reload_skips_when_a_field_has_text_but_no_focus(self):
+        page = board.render_board_html(self.root)
+        self.assertIn("value.trim()", page)
+        self.assertIn("textarea", page)
+
     def test_forms_still_present(self):
         page = board.render_board_html(self.root)
         self.assertIn("action='/new'", page)
