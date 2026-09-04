@@ -261,3 +261,20 @@ def add_comment(root: str, tid: str, body: str, by: str) -> None:
     block = "\n## comment — %s · %s\n%s\n" % (by, utc_now(), body.strip())
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(block)
+
+
+def column_snapshot(root: str, column: str) -> dict[str, float]:
+    column = validate_column(column)
+    snap = {}
+    for path in glob.glob(os.path.join(root, column, "*.md")):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        head = stem.split("-", 1)[0]
+        if head.isdigit():
+            snap[head.zfill(3)] = os.path.getmtime(path)
+    return snap
+
+
+def watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str], dict[str, float]]:
+    current = column_snapshot(root, column)
+    changed = sorted(tid for tid, mtime in current.items() if seen.get(tid) != mtime)
+    return changed, current

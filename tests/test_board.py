@@ -282,5 +282,41 @@ class TestMutate(unittest.TestCase):
         self.assertEqual(len(board.load_ticket(path).comments), 8)
 
 
+class TestWatch(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_new_ticket_is_a_change(self):
+        changed, seen = board.watch_once(self.root, "todo", {})
+        self.assertEqual(changed, [])
+        board.create_ticket(self.root, "hello")
+        changed, seen = board.watch_once(self.root, "todo", seen)
+        self.assertEqual(changed, ["001"])
+
+    def test_unchanged_emits_nothing(self):
+        board.create_ticket(self.root, "hello")
+        _, seen = board.watch_once(self.root, "todo", {})
+        changed, _ = board.watch_once(self.root, "todo", seen)
+        self.assertEqual(changed, [])
+
+    def test_touched_ticket_marks_changed(self):
+        board.create_ticket(self.root, "hello")
+        _, seen = board.watch_once(self.root, "todo", {})
+        os.utime(board.find_ticket(self.root, "1")[1], (2000000000, 2000000000))
+        changed, _ = board.watch_once(self.root, "todo", seen)
+        self.assertEqual(changed, ["001"])
+
+    def test_move_out_is_not_a_change_in_source(self):
+        board.create_ticket(self.root, "hello")
+        _, seen = board.watch_once(self.root, "todo", {})
+        board.move_ticket(self.root, "1", "review")
+        changed, _ = board.watch_once(self.root, "todo", seen)
+        self.assertEqual(changed, [])
+
+
 if __name__ == "__main__":
     unittest.main()
