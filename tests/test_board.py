@@ -1,10 +1,12 @@
 import contextlib
+import http.client
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -433,6 +435,60 @@ class TestWebUI(unittest.TestCase):
         after = board.render_board_html(self.root)
         self.assertNotEqual(before, after)
         self.assertEqual(after, board.render_board_html(self.root))
+
+    def test_malformed_content_length_returns_400(self):
+        """Malformed Content-Length header should return HTTP 400, not hang."""
+        handler = board._make_handler(self.root)
+        server = board.HTTPServer(("127.0.0.1", 0), handler)
+        port = server.server_port
+        srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        srv_thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port)
+            conn.request("POST", "/new", "", {"Content-Length": "abc"})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 400)
+            conn.close()
+        finally:
+            server.shutdown()
+
+    def test_oversized_content_length_returns_400(self):
+        """Content-Length larger than MAX_BODY_BYTES should return HTTP 400."""
+        handler = board._make_handler(self.root)
+        server = board.HTTPServer(("127.0.0.1", 0), handler)
+        port = server.server_port
+        srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        srv_thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port)
+            conn.request("POST", "/new", "", {"Content-Length": str(board.MAX_BODY_BYTES + 1)})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 400)
+            conn.close()
+        finally:
+            server.shutdown()
+
+    def test_valid_post_still_works(self):
+        """Valid POST to /move should return 303 and move the ticket."""
+        board.create_ticket(self.root, "test task")
+        handler = board._make_handler(self.root)
+        server = board.HTTPServer(("127.0.0.1", 0), handler)
+        port = server.server_port
+        srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        srv_thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port)
+            body = "id=001&column=done"
+            conn.request("POST", "/move", body, {"Content-Length": str(len(body))})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 303)
+            self.assertEqual(resp.getheader("Location"), "/")
+            conn.close()
+            # Verify ticket was actually moved
+            col, _ = board.find_ticket(self.root, "1")
+            self.assertEqual(col, "done")
+        finally:
+            server.shutdown()
 
 
 if __name__ == "__main__":

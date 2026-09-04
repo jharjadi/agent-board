@@ -170,6 +170,7 @@ def atomic_write(path: str, text: str) -> None:
 
 
 MAX_ID_ATTEMPTS = 5
+MAX_BODY_BYTES = 1_000_000
 
 
 def _all_ticket_paths(root: str) -> list[str]:
@@ -364,10 +365,13 @@ def _make_handler(root: str):
             self.wfile.write(body)
 
         def do_POST(self):
-            length = int(self.headers.get("Content-Length") or 0)
-            fields = parse_qs(self.rfile.read(length).decode("utf-8"))
             path = urlparse(self.path).path
             try:
+                raw_len = self.headers.get("Content-Length") or "0"
+                length = int(raw_len)
+                if length < 0 or length > MAX_BODY_BYTES:
+                    raise ValueError("bad Content-Length: %s" % raw_len)
+                fields = parse_qs(self.rfile.read(length).decode("utf-8"))
                 if path == "/new":
                     title = (fields.get("title") or [""])[0].strip()
                     if title:
@@ -382,7 +386,7 @@ def _make_handler(root: str):
                 else:
                     self.send_error(404)
                     return
-            except (KeyError, ValueError) as exc:
+            except (KeyError, ValueError, RuntimeError, OSError) as exc:
                 self.send_error(400, str(exc))
                 return
             self.send_response(303)
