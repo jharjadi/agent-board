@@ -216,9 +216,10 @@ def load_ticket(path: str) -> Ticket:
 def find_ticket(root: str, tid: str) -> tuple[str, str]:
     tid = validate_id(tid)
     for col in COLUMNS:
-        matches = sorted(glob.glob(os.path.join(root, col, "%s-*.md" % tid)))
-        if matches:
-            return col, matches[0]
+        for pattern in ("%s-*.md" % tid, "%s.md" % tid):
+            matches = sorted(glob.glob(os.path.join(root, col, pattern)))
+            if matches:
+                return col, matches[0]
     raise KeyError("no ticket with id %s" % tid)
 
 
@@ -228,7 +229,7 @@ def list_tickets(root: str, column: str | None = None) -> list[tuple[str, Ticket
     for col in cols:
         for path in sorted(glob.glob(os.path.join(root, col, "*.md"))):
             rows.append((col, load_ticket(path)))
-    rows.sort(key=lambda row: row[1].id)
+    rows.sort(key=lambda row: int(row[1].id))
     return rows
 
 

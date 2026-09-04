@@ -207,6 +207,24 @@ class TestRead(unittest.TestCase):
         self.assertEqual(d["comments"], [])
         self.assertIn("created", d)
 
+    def test_list_sorted_numerically_past_999(self):
+        for tid, title in (("002", "two"), ("1000", "thousand")):
+            t = board.Ticket(id=tid, title=title, created=board.utc_now(), description="d")
+            path = os.path.join(self.root, "todo", f"{tid}-{board.slugify(title)}.md")
+            board.atomic_write(path, board.render_ticket(t))
+        ids = [t.id for _, t in board.list_tickets(self.root, "todo")]
+        self.assertLess(ids.index("002"), ids.index("1000"))
+
+    def test_find_ticket_with_bare_file(self):
+        # Create a bare ticket file (crashed during creation)
+        t = board.Ticket(id="007", title="bare ticket", created=board.utc_now(), description="d")
+        path = os.path.join(self.root, "doing", "007.md")
+        board.atomic_write(path, board.render_ticket(t))
+        # find_ticket should locate it via fallback pattern
+        col, found_path = board.find_ticket(self.root, "7")
+        self.assertEqual(col, "doing")
+        self.assertTrue(found_path.endswith("007.md"))
+
 
 if __name__ == "__main__":
     unittest.main()
