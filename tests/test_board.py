@@ -403,5 +403,37 @@ class TestCLI(unittest.TestCase):
             os.chmod(todo, 0o700)
 
 
+class TestWebUI(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_renders_all_columns(self):
+        page = board.render_board_html(self.root)
+        for col in board.COLUMNS:
+            self.assertIn(col, page)
+
+    def test_renders_ticket_title(self):
+        board.create_ticket(self.root, "visible title")
+        self.assertIn("visible title", board.render_board_html(self.root))
+
+    def test_escapes_html_in_title(self):
+        board.create_ticket(self.root, "<script>alert(1)</script>")
+        page = board.render_board_html(self.root)
+        self.assertNotIn("<script>alert(1)</script>", page)
+        self.assertIn("&lt;script&gt;", page)
+
+    def test_state_reconstructs_from_disk(self):
+        board.create_ticket(self.root, "one")
+        before = board.render_board_html(self.root)
+        board.move_ticket(self.root, "1", "done")
+        after = board.render_board_html(self.root)
+        self.assertNotEqual(before, after)
+        self.assertEqual(after, board.render_board_html(self.root))
+
+
 if __name__ == "__main__":
     unittest.main()

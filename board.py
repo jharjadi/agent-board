@@ -2,6 +2,7 @@
 """agent-board - a file-backed kanban board for coordinating coding agents."""
 import argparse
 import glob
+import html
 import json
 import os
 import re
@@ -10,6 +11,8 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 COLUMNS = ("todo", "doing", "review", "blocked", "done")
 FM_DELIM = "---"
@@ -291,8 +294,108 @@ def _print_rows(rows) -> None:
         print("%s  %-8s %s%s" % (t.id, col, t.title, owner))
 
 
+PAGE_CSS = """
+body{font:14px system-ui,sans-serif;margin:0;padding:16px;background:#f6f7f9;color:#111}
+h1{font-size:18px;margin:0 0 12px}
+.cols{display:flex;gap:12px;align-items:flex-start;overflow-x:auto}
+.col{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:10px;min-width:230px;flex:1}
+.col h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#667;margin:0 0 8px}
+.t{border:1px solid #e5e8ec;border-radius:6px;padding:8px;margin-bottom:8px;background:#fcfcfd}
+.t .id{color:#889;font-size:12px}
+.t .own{color:#3a6;font-size:12px}
+.meta{color:#889;font-size:12px}
+form.inline{display:inline}
+button{font:12px system-ui;padding:2px 6px;margin:1px 0;cursor:pointer}
+.add{margin-top:16px;background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:12px;max-width:520px}
+input,textarea{width:100%;padding:6px;margin:4px 0;border:1px solid #ccd;border-radius:4px;font:13px system-ui}
+"""
+
+
+def render_board_html(root: str) -> str:
+    esc = html.escape
+    cols_html = []
+    for col in COLUMNS:
+        cards = []
+        for _, t in list_tickets(root, col):
+            moves = "".join(
+                '<form class="inline" method="post" action="/move">'
+                '<input type="hidden" name="id" value="%s">'
+                '<input type="hidden" name="column" value="%s">'
+                "<button>%s</button></form>" % (esc(t.id), esc(c), esc(c))
+                for c in COLUMNS if c != col
+            )
+            owner = '<span class="own">@%s</span>' % esc(t.owner) if t.owner else ""
+            cards.append(
+                '<div class="t"><span class="id">%s</span> %s %s'
+                '<div class="meta">%d comment(s)</div><div>%s</div></div>'
+                % (esc(t.id), esc(t.title), owner, len(t.comments), moves)
+            )
+        cols_html.append(
+            '<div class="col"><h2>%s (%d)</h2>%s</div>'
+            % (esc(col), len(cards), "".join(cards) or '<div class="meta">empty</div>')
+        )
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta http-equiv='refresh' content='3'>"
+        "<title>agent-board</title><style>%s</style></head><body>"
+        "<h1>agent-board</h1><div class='cols'>%s</div>"
+        "<div class='add'><form method='post' action='/new'>"
+        "<input name='title' placeholder='Ticket title' required>"
+        "<textarea name='desc' rows='3' placeholder='Description'></textarea>"
+        "<button>Add ticket</button></form></div>"
+        "</body></html>" % (PAGE_CSS, "".join(cols_html))
+    )
+
+
+def _make_handler(root: str):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if urlparse(self.path).path != "/":
+                self.send_error(404)
+                return
+            body = render_board_html(root).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            fields = parse_qs(self.rfile.read(length).decode("utf-8"))
+            path = urlparse(self.path).path
+            try:
+                if path == "/new":
+                    title = (fields.get("title") or [""])[0].strip()
+                    if title:
+                        create_ticket(root, title, (fields.get("desc") or [""])[0])
+                elif path == "/move":
+                    move_ticket(root, (fields.get("id") or [""])[0],
+                                (fields.get("column") or [""])[0])
+                elif path == "/comment":
+                    add_comment(root, (fields.get("id") or [""])[0],
+                                (fields.get("body") or [""])[0],
+                                (fields.get("by") or ["human"])[0])
+                else:
+                    self.send_error(404)
+                    return
+            except (KeyError, ValueError) as exc:
+                self.send_error(400, str(exc))
+                return
+            self.send_response(303)
+            self.send_header("Location", "/")
+            self.end_headers()
+
+    return Handler
+
+
 def serve(root: str, port: int = 8899) -> None:
-    raise NotImplementedError("implemented in Task 8")
+    server = HTTPServer(("127.0.0.1", port), _make_handler(root))
+    print("agent-board on http://127.0.0.1:%d  (ctrl-c to stop)" % port, flush=True)
+    server.serve_forever()
 
 
 def main(argv: list[str] | None = None) -> int:
