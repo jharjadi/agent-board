@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """agent-board - a file-backed kanban board for coordinating coding agents."""
 import argparse
+import errno
 import glob
 import html
 import json
@@ -428,7 +429,12 @@ def render_board_html(root: str) -> str:
         )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
-        "<meta http-equiv='refresh' content='3'>"
+        # A meta refresh reloads mid-typing and destroys whatever is in a form.
+        # Poll instead, and skip the reload while the user is editing.
+        "<script>setInterval(function(){"
+        "var a=document.activeElement;"
+        "if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;"
+        "location.reload();},3000);</script>"
         "<title>agent-board</title><style>%s</style></head><body>"
         "<h1>agent-board</h1><div class='cols'>%s</div>"
         "<div class='add'><form method='post' action='/new'>"
@@ -492,7 +498,15 @@ def _make_handler(root: str):
 
 
 def serve(root: str, port: int = 8899) -> None:
-    server = HTTPServer(("127.0.0.1", port), _make_handler(root))
+    try:
+        server = HTTPServer(("127.0.0.1", port), _make_handler(root))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise SystemExit(
+                "port %d is already in use — another board may be running.\n"
+                "Try:  board serve --port %d" % (port, port + 1)
+            )
+        raise
     print("agent-board on http://127.0.0.1:%d  (ctrl-c to stop)" % port, flush=True)
     server.serve_forever()
 

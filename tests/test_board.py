@@ -669,5 +669,49 @@ class TestAgentsDoc(unittest.TestCase):
         self.assertIn("ask", text)
 
 
+
+class TestRefreshAndPort(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "a ticket")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_no_meta_refresh_that_would_eat_typed_input(self):
+        page = board.render_board_html(self.root)
+        self.assertNotIn("http-equiv", page)
+        self.assertNotIn("refresh", page.split("<style>")[0].lower())
+
+    def test_reload_is_focus_aware(self):
+        page = board.render_board_html(self.root)
+        self.assertIn("activeElement", page)
+        self.assertIn("TEXTAREA", page)
+        self.assertIn("INPUT", page)
+
+    def test_forms_still_present(self):
+        page = board.render_board_html(self.root)
+        self.assertIn("action='/new'", page)
+        self.assertIn('action="/comment"', page)
+
+    def test_busy_port_gives_actionable_message(self):
+        import socket
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.listen(1)
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                board.serve(self.root, port)
+            msg = str(ctx.exception)
+            self.assertIn(str(port), msg)
+            self.assertIn("already in use", msg)
+            self.assertIn("--port", msg)
+        finally:
+            sock.close()
+
+
 if __name__ == "__main__":
     unittest.main()
