@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """agent-board - a file-backed kanban board for coordinating coding agents."""
+import argparse
 import glob
+import json
 import os
 import re
 import sys
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
@@ -278,3 +281,112 @@ def watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str
     current = column_snapshot(root, column)
     changed = sorted((tid for tid, mtime in current.items() if seen.get(tid) != mtime), key=int)
     return changed, current
+
+def _print_rows(rows) -> None:
+    if not rows:
+        print("(empty)")
+        return
+    for col, t in rows:
+        owner = " @%s" % t.owner if t.owner else ""
+        print("%s  %-8s %s%s" % (t.id, col, t.title, owner))
+
+
+def serve(root: str, port: int = 8899) -> None:
+    raise NotImplementedError("implemented in Task 8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="board",
+                                     description="file-backed kanban for coding agents")
+    sub = parser.add_subparsers(dest="cmd")
+
+    sub.add_parser("init")
+
+    p = sub.add_parser("new")
+    p.add_argument("title")
+    p.add_argument("--desc", default="")
+    p.add_argument("--column", default="todo")
+    p.add_argument("--owner", default=None)
+
+    p = sub.add_parser("list")
+    p.add_argument("column", nargs="?", default=None)
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("show")
+    p.add_argument("id")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("take")
+    p.add_argument("id")
+    p.add_argument("--owner", required=True)
+
+    p = sub.add_parser("move")
+    p.add_argument("id")
+    p.add_argument("column")
+
+    p = sub.add_parser("comment")
+    p.add_argument("id")
+    p.add_argument("body")
+    p.add_argument("--by", required=True)
+
+    p = sub.add_parser("watch")
+    p.add_argument("column")
+    p.add_argument("--interval", type=float, default=5.0)
+
+    p = sub.add_parser("serve")
+    p.add_argument("--port", type=int, default=8899)
+
+    args = parser.parse_args(argv)
+    if not args.cmd:
+        parser.print_help()
+        return 1
+
+    if args.cmd == "init":
+        print("initialised %s" % init_board())
+        return 0
+
+    root = find_root()
+    try:
+        if args.cmd == "new":
+            print(create_ticket(root, args.title, args.desc, args.column, args.owner))
+        elif args.cmd == "list":
+            rows = list_tickets(root, args.column)
+            if args.json:
+                print(json.dumps([ticket_to_dict(c, t) for c, t in rows], indent=2))
+            else:
+                _print_rows(rows)
+        elif args.cmd == "show":
+            col, path = find_ticket(root, args.id)
+            ticket = load_ticket(path)
+            if args.json:
+                print(json.dumps(ticket_to_dict(col, ticket), indent=2))
+            else:
+                print("[%s] %s" % (col, path))
+                print(render_ticket(ticket))
+        elif args.cmd == "take":
+            take_ticket(root, args.id, args.owner)
+            print("%s -> doing (@%s)" % (validate_id(args.id), args.owner))
+        elif args.cmd == "move":
+            move_ticket(root, args.id, args.column)
+            print("%s -> %s" % (validate_id(args.id), args.column))
+        elif args.cmd == "comment":
+            add_comment(root, args.id, args.body, args.by)
+            print("comment added to %s" % validate_id(args.id))
+        elif args.cmd == "watch":
+            _, seen = watch_once(root, args.column, {})
+            print("watching %s/%s" % (BOARD_DIR, args.column), flush=True)
+            while True:
+                changed, seen = watch_once(root, args.column, seen)
+                for tid in changed:
+                    print("%s %s" % (args.column, tid), flush=True)
+                time.sleep(args.interval)
+        elif args.cmd == "serve":
+            serve(root, args.port)
+    except (KeyError, ValueError) as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -331,6 +333,62 @@ class TestWatch(unittest.TestCase):
                 fh.write("---\nid: %r\ntitle: test\ncreated: 2000-01-01T00:00:00Z\n---\n" % tid)
         changed, _ = board.watch_once(self.root, "todo", {})
         self.assertEqual(changed, ["001", "009", "099", "999", "1000", "1001"])
+
+
+class TestCLI(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        self.tmp.cleanup()
+
+    def run_cli(self, *args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = board.main(list(args))
+        return code, out.getvalue()
+
+    def test_init_then_new_then_list_json(self):
+        self.run_cli("init")
+        code, _ = self.run_cli("new", "first task", "--desc", "some detail")
+        self.assertEqual(code, 0)
+        code, out = self.run_cli("list", "--json")
+        data = json.loads(out)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["title"], "first task")
+        self.assertEqual(data[0]["column"], "todo")
+
+    def test_take_and_comment_and_show(self):
+        self.run_cli("init")
+        self.run_cli("new", "a task")
+        self.run_cli("take", "1", "--owner", "codex")
+        self.run_cli("comment", "1", "looks fine", "--by", "claude")
+        _, out = self.run_cli("show", "1", "--json")
+        data = json.loads(out)
+        self.assertEqual(data["column"], "doing")
+        self.assertEqual(data["owner"], "codex")
+        self.assertEqual(data["comments"][0]["body"], "looks fine")
+
+    def test_move_command(self):
+        self.run_cli("init")
+        self.run_cli("new", "a task")
+        self.run_cli("move", "1", "done")
+        _, out = self.run_cli("show", "1", "--json")
+        self.assertEqual(json.loads(out)["column"], "done")
+
+    def test_unknown_id_exits_nonzero(self):
+        self.run_cli("init")
+        code, _ = self.run_cli("show", "42")
+        self.assertNotEqual(code, 0)
+
+    def test_bad_column_exits_nonzero(self):
+        self.run_cli("init")
+        self.run_cli("new", "a task")
+        code, _ = self.run_cli("move", "1", "backlog")
+        self.assertNotEqual(code, 0)
 
 
 if __name__ == "__main__":
