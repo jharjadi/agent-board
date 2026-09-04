@@ -276,5 +276,5 @@ def column_snapshot(root: str, column: str) -> dict[str, float]:
 
 def watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str], dict[str, float]]:
     current = column_snapshot(root, column)
-    changed = sorted(tid for tid, mtime in current.items() if seen.get(tid) != mtime)
+    changed = sorted((tid for tid, mtime in current.items() if seen.get(tid) != mtime), key=int)
     return changed, current

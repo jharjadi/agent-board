@@ -317,6 +317,21 @@ class TestWatch(unittest.TestCase):
         changed, _ = board.watch_once(self.root, "todo", seen)
         self.assertEqual(changed, [])
 
+    def test_first_call_with_empty_seen_reports_existing(self):
+        board.create_ticket(self.root, "already here")
+        changed, seen = board.watch_once(self.root, "todo", {})
+        self.assertEqual(changed, ["001"])
+        self.assertIn("001", seen)
+
+    def test_watch_sorted_numerically_past_999(self):
+        col = os.path.join(self.root, "todo")
+        for tid in ["001", "009", "099", "999", "1000", "1001"]:
+            path = os.path.join(col, "%s-test.md" % tid)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("---\nid: %r\ntitle: test\ncreated: 2000-01-01T00:00:00Z\n---\n" % tid)
+        changed, _ = board.watch_once(self.root, "todo", {})
+        self.assertEqual(changed, ["001", "009", "099", "999", "1000", "1001"])
+
 
 if __name__ == "__main__":
     unittest.main()
