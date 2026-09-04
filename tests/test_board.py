@@ -161,6 +161,26 @@ class TestCreate(unittest.TestCase):
             self.assertEqual(len(ids), 8)
             self.assertEqual(len(set(ids)), 8, "duplicate ids: %s" % ids)
 
+    def test_concurrent_create_across_columns_never_duplicates(self):
+        """Reservation must be per-id, not per-(column, id): racing into
+        DIFFERENT columns must still never hand out the same id twice."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            code = (
+                "import sys; sys.path.insert(0, %r); import board; "
+                "print(board.create_ticket(%r, 'ticket ' + sys.argv[1], column=sys.argv[2]))"
+            ) % (os.path.dirname(os.path.abspath(board.__file__)), root)
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, "-c", code, str(i), board.COLUMNS[i % len(board.COLUMNS)]],
+                    stdout=subprocess.PIPE, text=True,
+                )
+                for i in range(8)
+            ]
+            ids = [p.communicate()[0].strip() for p in procs]
+            self.assertEqual(len(ids), 8)
+            self.assertEqual(len(set(ids)), 8, "duplicate ids: %s" % ids)
+
     def test_rejects_bad_column(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = board.init_board(tmp)

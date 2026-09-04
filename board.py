@@ -174,7 +174,7 @@ MAX_BODY_BYTES = 1_000_000
 
 
 def _all_ticket_paths(root: str) -> list[str]:
-    paths = []
+    paths = list(glob.glob(os.path.join(root, "*.md")))
     for col in COLUMNS:
         paths.extend(glob.glob(os.path.join(root, col, "*.md")))
     return paths
@@ -195,9 +195,12 @@ def create_ticket(root: str, title: str, description: str = "",
     column = validate_column(column)
     for _ in range(MAX_ID_ATTEMPTS):
         tid = next_id(root)
-        id_path = os.path.join(root, column, "%s.md" % tid)
+        # Reserve at the board ROOT, not inside a column: exclusivity must be
+        # on the id alone, or two concurrent creates into different columns
+        # can both win the same id.
+        reservation_path = os.path.join(root, "%s.md" % tid)
         try:
-            fd = os.open(id_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            fd = os.open(reservation_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
             continue
         try:
@@ -206,11 +209,12 @@ def create_ticket(root: str, title: str, description: str = "",
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(render_ticket(ticket))
             final_path = os.path.join(root, column, "%s-%s.md" % (tid, slugify(title)))
-            os.rename(id_path, final_path)
+            os.makedirs(os.path.dirname(final_path), exist_ok=True)
+            os.rename(reservation_path, final_path)
             return tid
         except BaseException:
-            if os.path.exists(id_path):
-                os.unlink(id_path)
+            if os.path.exists(reservation_path):
+                os.unlink(reservation_path)
             raise
     raise RuntimeError("could not allocate a ticket id after %d attempts" % MAX_ID_ATTEMPTS)
 
