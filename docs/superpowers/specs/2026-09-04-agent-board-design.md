@@ -98,8 +98,10 @@ from the files**, never as the source of truth.
 
 ## CLI
 
-Single file, `board.py`, standard library only, **Python 3.9+** (the macOS system
-python — so it runs anywhere it is copied, with no venv).
+Single file, `board.py`, standard library only, **Python 3.11+**. The `board` shim
+resolves a suitable interpreter explicitly (`python3.14`, `python3.13`, ... down to
+plain `python3`, checked at `>= 3.11`) rather than trusting bare `python3` — on
+macOS, the system `python3` is 3.9.6, too old for this codebase's syntax.
 
 ```
 board init                              create column directories
