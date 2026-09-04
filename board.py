@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """agent-board - a file-backed kanban board for coordinating coding agents."""
+import os
 import re
+import sys
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 COLUMNS = ("todo", "doing", "review", "blocked", "done")
 FM_DELIM = "---"
@@ -96,3 +100,63 @@ def render_ticket(t: Ticket) -> str:
     for c in t.comments:
         text += "\n## comment — %s · %s\n%s\n" % (c.by, c.at, c.body.strip())
     return text
+
+
+BOARD_DIR = ".agent-board"
+ID_RE = re.compile(r"^[0-9]{1,6}$")
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def validate_id(value: str) -> str:
+    if not isinstance(value, str) or not ID_RE.match(value):
+        raise ValueError("invalid ticket id: %r" % (value,))
+    return value.zfill(3)
+
+
+def validate_column(value: str) -> str:
+    if value not in COLUMNS:
+        raise ValueError("unknown column: %r (expected one of %s)" % (value, ", ".join(COLUMNS)))
+    return value
+
+
+def slugify(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug[:60] or "ticket"
+
+
+def init_board(base: str | None = None) -> str:
+    base = base or os.getcwd()
+    root = os.path.join(base, BOARD_DIR)
+    for col in COLUMNS:
+        os.makedirs(os.path.join(root, col), exist_ok=True)
+    return root
+
+
+def find_root(start: str | None = None) -> str:
+    path = os.path.abspath(start or os.getcwd())
+    while True:
+        candidate = os.path.join(path, BOARD_DIR)
+        if os.path.isdir(candidate):
+            return candidate
+        parent = os.path.dirname(path)
+        if parent == path:
+            sys.exit("no %s found in %s or any parent. Run: board init"
+                     % (BOARD_DIR, start or os.getcwd()))
+        path = parent
+
+
+def atomic_write(path: str, text: str) -> None:
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
