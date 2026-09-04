@@ -5,7 +5,7 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 COLUMNS = ("todo", "doing", "review", "blocked", "done")
@@ -206,3 +206,33 @@ def create_ticket(root: str, title: str, description: str = "",
                 os.unlink(id_path)
             raise
     raise RuntimeError("could not allocate a ticket id after %d attempts" % MAX_ID_ATTEMPTS)
+
+
+def load_ticket(path: str) -> Ticket:
+    with open(path, encoding="utf-8") as fh:
+        return parse_ticket(fh.read())
+
+
+def find_ticket(root: str, tid: str) -> tuple[str, str]:
+    tid = validate_id(tid)
+    for col in COLUMNS:
+        matches = sorted(glob.glob(os.path.join(root, col, "%s-*.md" % tid)))
+        if matches:
+            return col, matches[0]
+    raise KeyError("no ticket with id %s" % tid)
+
+
+def list_tickets(root: str, column: str | None = None) -> list[tuple[str, Ticket]]:
+    cols = (validate_column(column),) if column else COLUMNS
+    rows = []
+    for col in cols:
+        for path in sorted(glob.glob(os.path.join(root, col, "*.md"))):
+            rows.append((col, load_ticket(path)))
+    rows.sort(key=lambda row: row[1].id)
+    return rows
+
+
+def ticket_to_dict(column: str, t: Ticket) -> dict:
+    data = asdict(t)
+    data["column"] = column
+    return data

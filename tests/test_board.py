@@ -164,5 +164,49 @@ class TestCreate(unittest.TestCase):
                 board.create_ticket(root, "x", column="../escape")
 
 
+class TestRead(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "first task", "desc one")
+        board.create_ticket(self.root, "second task", "desc two", column="review")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_find_ticket_returns_column_and_path(self):
+        col, path = board.find_ticket(self.root, "2")
+        self.assertEqual(col, "review")
+        self.assertTrue(path.endswith("002-second-task.md"))
+
+    def test_find_ticket_missing_raises(self):
+        with self.assertRaises(KeyError):
+            board.find_ticket(self.root, "99")
+
+    def test_list_all(self):
+        rows = board.list_tickets(self.root)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({c for c, _ in rows}, {"todo", "review"})
+
+    def test_list_one_column(self):
+        rows = board.list_tickets(self.root, "review")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][1].title, "second task")
+
+    def test_list_sorted_by_id(self):
+        board.create_ticket(self.root, "third task")
+        ids = [t.id for _, t in board.list_tickets(self.root)]
+        self.assertEqual(ids, sorted(ids))
+
+    def test_ticket_to_dict_shape(self):
+        col, path = board.find_ticket(self.root, "1")
+        d = board.ticket_to_dict(col, board.load_ticket(path))
+        self.assertEqual(d["id"], "001")
+        self.assertEqual(d["column"], "todo")
+        self.assertEqual(d["title"], "first task")
+        self.assertEqual(d["comments"], [])
+        self.assertIn("created", d)
+
+
 if __name__ == "__main__":
     unittest.main()
