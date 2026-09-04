@@ -6,21 +6,22 @@
 
 **Architecture:** One dependency-free Python file. Directories under `.agent-board/` are columns; a ticket is one markdown file with frontmatter and appended comment sections. The directory is the only source of truth — moving a column is `mv`. A CLI serves agents; a stdlib HTTP server serves the human as a pure projection over the filesystem.
 
-**Tech Stack:** Python 3.9+ standard library only. `unittest` for tests, `http.server` for the UI. No third-party packages anywhere in the repo.
+**Tech Stack:** Python 3.11+ standard library only. `unittest` for tests, `http.server` for the UI. No third-party packages anywhere in the repo.
 
 **Spec:** `docs/superpowers/specs/2026-09-04-agent-board-design.md`
 
 ## Global Constraints
 
-- **Python 3.9+ compatible.** No `match`, no `X | Y` unions, no builtin generic subscripts at runtime. Use `typing.Optional` / `typing.List` / `typing.Dict`.
+- **Python 3.11+ required.** Modern syntax is expected: `X | None` unions, builtin generics (`list[str]`, `dict[str, float]`), `match` where it reads well. Do NOT import from `typing`.
+- **Do not trust bare `python3`.** On this Mac `python3` is `/usr/bin/python3` (3.9.6) while Homebrew has 3.13/3.14. The shim resolves a suitable interpreter explicitly and fails loudly if none is >= 3.11.
 - **Standard library only.** No third-party imports in `board.py` or in tests.
 - **Single file.** All implementation lives in `board.py` at the repo root. This is a packaging requirement — the file must be copyable, symlinkable, or `curl`-able on its own.
+- Run tests with an explicit interpreter: `python3.14 -m unittest discover -s tests -v` (or any >= 3.11).
 - **Columns are fixed:** `todo`, `doing`, `review`, `blocked`, `done`.
 - **The directory is the only truth.** `status` must never appear in frontmatter.
 - **All writes atomic:** temp file in the destination directory, then `os.replace`.
 - **Validate before touching paths.** Ids match `^[0-9]{1,6}$`; columns must be in the fixed set. Ticket ids become file paths.
 - **Timestamps** are ISO-8601 UTC with a `Z` suffix, e.g. `2026-09-04T13:53:00Z`.
-- Run tests with `python3 -m unittest discover -s tests -v`.
 
 ---
 
@@ -43,7 +44,7 @@
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `Comment` dataclass (`by: str`, `at: str`, `body: str`); `Ticket` dataclass (`id: str`, `title: str`, `created: str`, `description: str`, `owner: Optional[str]`, `branch: Optional[str]`, `comments: List[Comment]`); `parse_ticket(text: str) -> Ticket`; `render_ticket(t: Ticket) -> str`; `parse_frontmatter(text: str) -> Tuple[Dict[str, str], str]`; `COLUMNS: Tuple[str, ...]`
+- Produces: `Comment` dataclass (`by: str`, `at: str`, `body: str`); `Ticket` dataclass (`id: str`, `title: str`, `created: str`, `description: str`, `owner: str | None`, `branch: str | None`, `comments: list[Comment]`); `parse_ticket(text: str) -> Ticket`; `render_ticket(t: Ticket) -> str`; `parse_frontmatter(text: str) -> tuple[dict[str, str], str]`; `COLUMNS: tuple[str, ...]`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -111,7 +112,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'board'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -121,7 +122,6 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'board'`
 """agent-board - a file-backed kanban board for coordinating coding agents."""
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 
 COLUMNS = ("todo", "doing", "review", "blocked", "done")
 FM_DELIM = "---"
@@ -141,12 +141,12 @@ class Ticket:
     title: str
     created: str
     description: str = ""
-    owner: Optional[str] = None
-    branch: Optional[str] = None
-    comments: List[Comment] = field(default_factory=list)
+    owner: str | None = None
+    branch: str | None = None
+    comments: list[Comment] = field(default_factory=list)
 
 
-def parse_frontmatter(text: str) -> Tuple[Dict[str, str], str]:
+def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     lines = text.split("\n")
     if not lines or lines[0].strip() != FM_DELIM:
         raise ValueError("missing frontmatter")
@@ -174,10 +174,10 @@ def parse_ticket(text: str) -> Ticket:
     for required in ("id", "title", "created"):
         if required not in meta:
             raise ValueError("ticket missing required field: %s" % required)
-    desc: List[str] = []
-    comments: List[Comment] = []
+    desc: list[str] = []
+    comments: list[Comment] = []
     current = None
-    buf: List[str] = []
+    buf: list[str] = []
     for line in body.split("\n"):
         match = COMMENT_RE.match(line)
         if match:
@@ -220,7 +220,7 @@ def render_ticket(t: Ticket) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 5 tests
 
 - [ ] **Step 5: Commit**
@@ -240,7 +240,7 @@ git commit -m "feat: ticket parsing and rendering"
 
 **Interfaces:**
 - Consumes: `COLUMNS`
-- Produces: `BOARD_DIR = ".agent-board"`; `validate_id(value: str) -> str` (returns zero-padded to 3); `validate_column(value: str) -> str`; `find_root(start: Optional[str] = None) -> str`; `init_board(base: Optional[str] = None) -> str`; `utc_now() -> str`; `slugify(title: str) -> str`; `atomic_write(path: str, text: str) -> None`
+- Produces: `BOARD_DIR = ".agent-board"`; `validate_id(value: str) -> str` (returns zero-padded to 3); `validate_column(value: str) -> str`; `find_root(start: str | None = None) -> str`; `init_board(base: str | None = None) -> str`; `utc_now() -> str`; `slugify(title: str) -> str`; `atomic_write(path: str, text: str) -> None`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -307,7 +307,7 @@ class TestLayout(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'init_board'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -344,7 +344,7 @@ def slugify(title: str) -> str:
     return slug[:60] or "ticket"
 
 
-def init_board(base: Optional[str] = None) -> str:
+def init_board(base: str | None = None) -> str:
     base = base or os.getcwd()
     root = os.path.join(base, BOARD_DIR)
     for col in COLUMNS:
@@ -352,7 +352,7 @@ def init_board(base: Optional[str] = None) -> str:
     return root
 
 
-def find_root(start: Optional[str] = None) -> str:
+def find_root(start: str | None = None) -> str:
     path = os.path.abspath(start or os.getcwd())
     while True:
         candidate = os.path.join(path, BOARD_DIR)
@@ -381,7 +381,7 @@ def atomic_write(path: str, text: str) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 13 tests
 
 - [ ] **Step 5: Commit**
@@ -401,7 +401,7 @@ git commit -m "feat: board layout, path validation, init"
 
 **Interfaces:**
 - Consumes: `Ticket`, `render_ticket`, `validate_column`, `slugify`, `utc_now`, `COLUMNS`
-- Produces: `_all_ticket_paths(root: str) -> List[str]`; `next_id(root: str) -> str`; `create_ticket(root: str, title: str, description: str = "", column: str = "todo", owner: Optional[str] = None) -> str` returning the new zero-padded id
+- Produces: `_all_ticket_paths(root: str) -> list[str]`; `next_id(root: str) -> str`; `create_ticket(root: str, title: str, description: str = "", column: str = "todo", owner: str | None = None) -> str` returning the new zero-padded id
 
 - [ ] **Step 1: Write the failing test**
 
@@ -460,7 +460,7 @@ class TestCreate(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'create_ticket'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -472,7 +472,7 @@ import glob
 MAX_ID_ATTEMPTS = 5
 
 
-def _all_ticket_paths(root: str) -> List[str]:
+def _all_ticket_paths(root: str) -> list[str]:
     paths = []
     for col in COLUMNS:
         paths.extend(glob.glob(os.path.join(root, col, "*.md")))
@@ -489,7 +489,7 @@ def next_id(root: str) -> str:
 
 
 def create_ticket(root: str, title: str, description: str = "",
-                  column: str = "todo", owner: Optional[str] = None) -> str:
+                  column: str = "todo", owner: str | None = None) -> str:
     column = validate_column(column)
     for _ in range(MAX_ID_ATTEMPTS):
         tid = next_id(root)
@@ -508,7 +508,7 @@ def create_ticket(root: str, title: str, description: str = "",
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 18 tests
 
 - [ ] **Step 5: Commit**
@@ -528,7 +528,7 @@ git commit -m "feat: create tickets with collision-safe ids"
 
 **Interfaces:**
 - Consumes: `parse_ticket`, `validate_id`, `validate_column`, `COLUMNS`
-- Produces: `load_ticket(path: str) -> Ticket`; `find_ticket(root: str, tid: str) -> Tuple[str, str]` returning `(column, path)` and raising `KeyError` when absent; `list_tickets(root: str, column: Optional[str] = None) -> List[Tuple[str, Ticket]]` sorted by id; `ticket_to_dict(column: str, t: Ticket) -> Dict`
+- Produces: `load_ticket(path: str) -> Ticket`; `find_ticket(root: str, tid: str) -> tuple[str, str]` returning `(column, path)` and raising `KeyError` when absent; `list_tickets(root: str, column: str | None = None) -> list[tuple[str, Ticket]]` sorted by id; `ticket_to_dict(column: str, t: Ticket) -> Dict`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -580,7 +580,7 @@ class TestRead(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'find_ticket'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -595,7 +595,7 @@ def load_ticket(path: str) -> Ticket:
         return parse_ticket(fh.read())
 
 
-def find_ticket(root: str, tid: str) -> Tuple[str, str]:
+def find_ticket(root: str, tid: str) -> tuple[str, str]:
     tid = validate_id(tid)
     for col in COLUMNS:
         matches = sorted(glob.glob(os.path.join(root, col, "%s-*.md" % tid)))
@@ -604,7 +604,7 @@ def find_ticket(root: str, tid: str) -> Tuple[str, str]:
     raise KeyError("no ticket with id %s" % tid)
 
 
-def list_tickets(root: str, column: Optional[str] = None) -> List[Tuple[str, Ticket]]:
+def list_tickets(root: str, column: str | None = None) -> list[tuple[str, Ticket]]:
     cols = (validate_column(column),) if column else COLUMNS
     rows = []
     for col in cols:
@@ -614,7 +614,7 @@ def list_tickets(root: str, column: Optional[str] = None) -> List[Tuple[str, Tic
     return rows
 
 
-def ticket_to_dict(column: str, t: Ticket) -> Dict:
+def ticket_to_dict(column: str, t: Ticket) -> dict:
     data = asdict(t)
     data["column"] = column
     return data
@@ -622,7 +622,7 @@ def ticket_to_dict(column: str, t: Ticket) -> Dict:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 24 tests
 
 - [ ] **Step 5: Commit**
@@ -693,7 +693,7 @@ class TestMutate(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'move_ticket'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -726,7 +726,7 @@ def add_comment(root: str, tid: str, body: str, by: str) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 29 tests
 
 - [ ] **Step 5: Commit**
@@ -746,7 +746,7 @@ git commit -m "feat: move, take, and comment on tickets"
 
 **Interfaces:**
 - Consumes: `validate_column`
-- Produces: `column_snapshot(root: str, column: str) -> Dict[str, float]` mapping ticket id to mtime; `watch_once(root: str, column: str, seen: Dict[str, float]) -> Tuple[List[str], Dict[str, float]]` returning changed ids and the new snapshot
+- Produces: `column_snapshot(root: str, column: str) -> dict[str, float]` mapping ticket id to mtime; `watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str], dict[str, float]]` returning changed ids and the new snapshot
 
 - [ ] **Step 1: Write the failing test**
 
@@ -790,14 +790,14 @@ class TestWatch(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'watch_once'`
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
 # add to board.py
-def column_snapshot(root: str, column: str) -> Dict[str, float]:
+def column_snapshot(root: str, column: str) -> dict[str, float]:
     column = validate_column(column)
     snap = {}
     for path in glob.glob(os.path.join(root, column, "*.md")):
@@ -807,7 +807,7 @@ def column_snapshot(root: str, column: str) -> Dict[str, float]:
     return snap
 
 
-def watch_once(root: str, column: str, seen: Dict[str, float]) -> Tuple[List[str], Dict[str, float]]:
+def watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str], dict[str, float]]:
     current = column_snapshot(root, column)
     changed = sorted(tid for tid, mtime in current.items() if seen.get(tid) != mtime)
     return changed, current
@@ -815,7 +815,7 @@ def watch_once(root: str, column: str, seen: Dict[str, float]) -> Tuple[List[str
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 33 tests
 
 - [ ] **Step 5: Commit**
@@ -835,7 +835,7 @@ git commit -m "feat: column watcher emitting changed ticket ids"
 
 **Interfaces:**
 - Consumes: every function from Tasks 2-6
-- Produces: `main(argv: Optional[List[str]] = None) -> int`
+- Produces: `main(argv: list[str] | None = None) -> int`
 
 Note: `main` dispatches `serve`, which Task 8 defines. To keep this task independently
 runnable, add this stub immediately above `main` now; Task 8 replaces it.
@@ -912,7 +912,7 @@ class TestCLI(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'main'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -933,7 +933,7 @@ def _print_rows(rows) -> None:
         print("%s  %-8s %s%s" % (t.id, col, t.title, owner))
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="board",
                                      description="file-backed kanban for coding agents")
     sub = parser.add_subparsers(dest="cmd")
@@ -1032,7 +1032,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 38 tests
 
 - [ ] **Step 5: Commit**
@@ -1092,7 +1092,7 @@ class TestWebUI(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: FAIL — `AttributeError: module 'board' has no attribute 'render_board_html'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1211,7 +1211,7 @@ def serve(root: str, port: int = 8899) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python3 -m unittest discover -s tests -v`
+Run: `python3.14 -m unittest discover -s tests -v`
 Expected: PASS — 42 tests
 
 - [ ] **Step 5: Commit**
@@ -1251,7 +1251,20 @@ while [ -L "$src" ]; do
   [[ "$src" != /* ]] && src="$dir/$src"
 done
 dir="$(cd -P "$(dirname "$src")" && pwd)"
-exec python3 "$dir/board.py" "$@"
+
+# Never trust bare `python3` - on macOS it is often 3.9. Need >= 3.11.
+py=""
+for cand in python3.14 python3.13 python3.12 python3.11 python3; do
+  if command -v "$cand" >/dev/null 2>&1 &&
+     "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
+    py="$cand"; break
+  fi
+done
+if [ -z "$py" ]; then
+  echo "board: needs Python 3.11+; none found (tried python3.14 ... python3)" >&2
+  exit 1
+fi
+exec "$py" "$dir/board.py" "$@"
 SH
 chmod +x board
 ```
@@ -1264,7 +1277,7 @@ chmod +x board
 A file-backed kanban board for coordinating several coding agents with a human in
 the loop. Directories are columns, tickets are markdown files, git is the history.
 
-No dependencies. Python 3.9+.
+No dependencies. Python 3.11+.
 
 ## Install
 
@@ -1340,6 +1353,6 @@ git push
 
 **Two spec items deliberately not built as code.** Git worktrees and cmux nudge wiring are operational practice, documented in the README (Task 9). There is nothing for `board.py` to do about either, and inventing commands for them would be scope creep.
 
-**Type consistency.** `find_ticket` returns `(column, path)` in Tasks 4, 5, 7. `list_tickets` returns `List[Tuple[str, Ticket]]` and is unpacked that way in Tasks 4, 7, 8. `watch_once(root, column, seen)` returns `(changed, snapshot)` in Tasks 6 and 7. `validate_id` returns a zero-padded id everywhere, so `board take 7` and `board take 007` behave identically. `Ticket` is only ever constructed with keywords, so field order is not load-bearing.
+**Type consistency.** `find_ticket` returns `(column, path)` in Tasks 4, 5, 7. `list_tickets` returns `list[tuple[str, Ticket]]` and is unpacked that way in Tasks 4, 7, 8. `watch_once(root, column, seen)` returns `(changed, snapshot)` in Tasks 6 and 7. `validate_id` returns a zero-padded id everywhere, so `board take 7` and `board take 007` behave identically. `Ticket` is only ever constructed with keywords, so field order is not load-bearing.
 
 **Known ordering wrinkle.** Task 7's `main` dispatches `serve`, which Task 8 defines. Task 7 states the temporary stub explicitly rather than leaving a confusing failure.
