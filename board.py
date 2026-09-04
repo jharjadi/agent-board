@@ -134,6 +134,12 @@ def slugify(title: str) -> str:
     return slug[:60] or "ticket"
 
 
+def sanitize_scalar(value: str) -> str:
+    """Frontmatter values must be single-line. Collapse control chars to spaces."""
+    cleaned = "".join(" " if (ch == "\n" or ch == "\r" or ord(ch) < 32) else ch for ch in value)
+    return " ".join(cleaned.split()).strip()
+
+
 def init_board(base: str | None = None) -> str:
     base = base or os.getcwd()
     root = os.path.join(base, BOARD_DIR)
@@ -193,6 +199,8 @@ def next_id(root: str) -> str:
 def create_ticket(root: str, title: str, description: str = "",
                   column: str = "todo", owner: str | None = None) -> str:
     column = validate_column(column)
+    title = sanitize_scalar(title)
+    owner = sanitize_scalar(owner) if owner else owner
     for _ in range(MAX_ID_ATTEMPTS):
         tid = next_id(root)
         # Reserve at the board ROOT, not inside a column: exclusivity must be
@@ -262,7 +270,7 @@ def move_ticket(root: str, tid: str, column: str) -> str:
 def take_ticket(root: str, tid: str, owner: str) -> str:
     _, path = find_ticket(root, tid)
     ticket = load_ticket(path)
-    ticket.owner = owner
+    ticket.owner = sanitize_scalar(owner)
     atomic_write(path, render_ticket(ticket))
     return move_ticket(root, tid, "doing")
 

@@ -187,6 +187,33 @@ class TestCreate(unittest.TestCase):
             with self.assertRaises(ValueError):
                 board.create_ticket(root, "x", column="../escape")
 
+    def test_title_with_frontmatter_injection_is_sanitized(self):
+        """A newline-laden title must not be able to terminate frontmatter
+        early and corrupt the file for every later reader."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            evil_title = "evil\n---\nowner: x"
+            tid = board.create_ticket(root, evil_title)
+            _, path = board.find_ticket(root, tid)
+            # Must still parse.
+            t = board.load_ticket(path)
+            self.assertNotIn("\n", t.title)
+            self.assertEqual(t.owner, None)
+            # Must still list.
+            rows = board.list_tickets(root)
+            self.assertEqual(len(rows), 1)
+            # Must not break the web UI, which loads every file.
+            page = board.render_board_html(root)
+            self.assertIn("evil", page)
+
+    def test_owner_with_newline_is_sanitized_on_create(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            tid = board.create_ticket(root, "task", owner="mal\nlory")
+            _, path = board.find_ticket(root, tid)
+            t = board.load_ticket(path)
+            self.assertNotIn("\n", t.owner)
+
 
 class TestRead(unittest.TestCase):
     def setUp(self):
@@ -275,6 +302,13 @@ class TestMutate(unittest.TestCase):
         col, path = board.find_ticket(self.root, "1")
         self.assertEqual(col, "doing")
         self.assertEqual(board.load_ticket(path).owner, "codex")
+
+    def test_take_sanitizes_owner_with_newline(self):
+        board.take_ticket(self.root, "1", "evil\n---\nbranch: hijacked")
+        _, path = board.find_ticket(self.root, "1")
+        t = board.load_ticket(path)
+        self.assertNotIn("\n", t.owner)
+        self.assertIsNone(t.branch)
 
     def test_comment_appends_and_preserves_description(self):
         board.add_comment(self.root, "1", "first note", "claude")
