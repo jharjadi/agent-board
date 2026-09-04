@@ -237,3 +237,27 @@ def ticket_to_dict(column: str, t: Ticket) -> dict:
     data = asdict(t)
     data["column"] = column
     return data
+
+
+def move_ticket(root: str, tid: str, column: str) -> str:
+    column = validate_column(column)
+    _, path = find_ticket(root, tid)
+    dest = os.path.join(root, column, os.path.basename(path))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    os.replace(path, dest)
+    return dest
+
+
+def take_ticket(root: str, tid: str, owner: str) -> str:
+    _, path = find_ticket(root, tid)
+    ticket = load_ticket(path)
+    ticket.owner = owner
+    atomic_write(path, render_ticket(ticket))
+    return move_ticket(root, tid, "doing")
+
+
+def add_comment(root: str, tid: str, body: str, by: str) -> None:
+    _, path = find_ticket(root, tid)
+    ticket = load_ticket(path)
+    ticket.comments.append(Comment(by=by, at=utc_now(), body=body))
+    atomic_write(path, render_ticket(ticket))

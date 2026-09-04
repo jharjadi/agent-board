@@ -226,5 +226,48 @@ class TestRead(unittest.TestCase):
         self.assertTrue(found_path.endswith("007.md"))
 
 
+class TestMutate(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "a task", "desc")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_move_changes_column_and_leaves_one_file(self):
+        board.move_ticket(self.root, "1", "review")
+        self.assertEqual(os.listdir(os.path.join(self.root, "todo")), [])
+        self.assertEqual(len(os.listdir(os.path.join(self.root, "review"))), 1)
+        col, _ = board.find_ticket(self.root, "1")
+        self.assertEqual(col, "review")
+
+    def test_move_rejects_bad_column(self):
+        with self.assertRaises(ValueError):
+            board.move_ticket(self.root, "1", "nowhere")
+
+    def test_take_sets_owner_and_moves_to_doing(self):
+        board.take_ticket(self.root, "1", "codex")
+        col, path = board.find_ticket(self.root, "1")
+        self.assertEqual(col, "doing")
+        self.assertEqual(board.load_ticket(path).owner, "codex")
+
+    def test_comment_appends_and_preserves_description(self):
+        board.add_comment(self.root, "1", "first note", "claude")
+        board.add_comment(self.root, "1", "second note", "codex")
+        _, path = board.find_ticket(self.root, "1")
+        t = board.load_ticket(path)
+        self.assertEqual(len(t.comments), 2)
+        self.assertEqual(t.comments[0].by, "claude")
+        self.assertEqual(t.comments[1].body, "second note")
+        self.assertEqual(t.description, "desc")
+
+    def test_comment_survives_move(self):
+        board.add_comment(self.root, "1", "note", "claude")
+        board.move_ticket(self.root, "1", "done")
+        _, path = board.find_ticket(self.root, "1")
+        self.assertEqual(len(board.load_ticket(path).comments), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
