@@ -780,5 +780,52 @@ class TestOwnerHint(unittest.TestCase):
             os.chdir(cwd)
 
 
+
+class TestUIComments(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "visible ticket", "the description")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_comment_body_and_author_are_rendered(self):
+        board.add_comment(self.root, "1", "the first note", "claude")
+        board.add_comment(self.root, "1", "the second note", "codex")
+        page = board.render_board_html(self.root)
+        self.assertIn("the first note", page)
+        self.assertIn("the second note", page)
+        self.assertIn("claude", page)
+        self.assertIn("codex", page)
+
+    def test_comment_body_is_escaped(self):
+        board.add_comment(self.root, "1", "<script>alert(1)</script>", "claude")
+        page = board.render_board_html(self.root)
+        self.assertNotIn("<script>alert(1)</script>", page)
+        self.assertIn("&lt;script&gt;", page)
+
+    def test_comment_author_is_escaped(self):
+        board.add_comment(self.root, "1", "ok", "<b>evil</b>")
+        page = board.render_board_html(self.root)
+        self.assertNotIn("<b>evil</b>", page)
+
+    def test_description_is_rendered_and_escaped(self):
+        board.create_ticket(self.root, "second", "<i>desc</i>")
+        page = board.render_board_html(self.root)
+        self.assertIn("the description", page)
+        self.assertNotIn("<i>desc</i>", page)
+
+    def test_ticket_without_comments_renders_no_comment_block(self):
+        page = board.render_board_html(self.root)
+        self.assertNotIn('class="c"', page)
+
+    def test_multiline_comment_body_keeps_its_breaks(self):
+        board.add_comment(self.root, "1", "line one\nline two", "claude")
+        page = board.render_board_html(self.root)
+        self.assertIn("line one", page)
+        self.assertIn("line two", page)
+
+
 if __name__ == "__main__":
     unittest.main()

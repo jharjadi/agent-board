@@ -395,62 +395,143 @@ def _print_rows(rows) -> None:
         print("%s  %-8s %s%s" % (t.id, col, t.title, owner))
 
 
+COLUMN_ACCENT = {
+    "todo": "#5e6c84",
+    "doing": "#0052cc",
+    "review": "#ff8b00",
+    "blocked": "#de350b",
+    "done": "#00875a",
+}
+
 PAGE_CSS = """
-body{font:14px system-ui,sans-serif;margin:0;padding:16px;background:#f6f7f9;color:#111}
-h1{font-size:18px;margin:0 0 12px}
-.cols{display:flex;gap:12px;align-items:flex-start;overflow-x:auto}
-.col{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:10px;min-width:230px;flex:1}
-.col h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#667;margin:0 0 8px}
-.t{border:1px solid #e5e8ec;border-radius:6px;padding:8px;margin-bottom:8px;background:#fcfcfd}
-.t .id{color:#889;font-size:12px}
-.t .own{color:#3a6;font-size:12px}
-.meta{color:#889;font-size:12px}
-form.inline{display:inline}
-button{font:12px system-ui;padding:2px 6px;margin:1px 0;cursor:pointer}
-.add{margin-top:16px;background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:12px;max-width:520px}
-input,textarea{width:100%;padding:6px;margin:4px 0;border:1px solid #ccd;border-radius:4px;font:13px system-ui}
+*{box-sizing:border-box}
+body{margin:0;padding:20px 24px;background:#f4f5f7;color:#172b4d;
+ font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+h1{font-size:16px;font-weight:600;margin:0 0 3px;letter-spacing:-.01em}
+.sub{color:#6b778c;font-size:12px;margin:0 0 18px}
+.cols{display:flex;gap:10px;align-items:flex-start;padding-bottom:8px}
+.col{background:#ebecf0;border-radius:4px;padding:8px;flex:1 1 0;min-width:200px;min-height:110px}
+.col h2{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;
+ text-transform:uppercase;letter-spacing:.08em;color:#5e6c84;margin:4px 6px 10px}
+.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.n{margin-left:auto;color:#5e6c84;font-weight:600}
+.t{background:#fff;border-radius:3px;padding:10px 12px;margin-bottom:8px;
+ box-shadow:0 1px 2px rgba(9,30,66,.2)}
+.t:hover{box-shadow:0 2px 6px rgba(9,30,66,.25)}
+.title{font-size:14px;font-weight:500;margin-bottom:5px;word-wrap:break-word}
+.desc{color:#5e6c84;font-size:12.5px;margin:0 0 6px;white-space:pre-wrap;word-wrap:break-word}
+.meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px}
+.id{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#5e6c84;
+ background:#f4f5f7;border-radius:3px;padding:1px 6px}
+.own{background:#deebff;color:#0747a6;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600}
+.cnt{color:#6b778c;font-size:11px}
+.comments{margin-top:9px;border-top:1px solid #f4f5f7;padding-top:8px;max-height:240px;overflow-y:auto}
+.c{margin-bottom:8px}
+.c:last-child{margin-bottom:0}
+.c .who{font-size:11px;font-weight:600}
+.c .when{font-size:11px;color:#6b778c;margin-left:6px}
+.c .body{font-size:12.5px;color:#42526e;white-space:pre-wrap;word-wrap:break-word;margin-top:1px}
+details{margin-top:8px}
+summary{cursor:pointer;color:#6b778c;font-size:11px;list-style:none;user-select:none}
+summary::-webkit-details-marker{display:none}
+summary:hover{color:#0052cc}
+.acts{margin-top:7px;display:flex;flex-direction:column;gap:6px}
+.pills{display:flex;gap:4px;flex-wrap:wrap}
+form.inline{display:flex;gap:4px}
+button{font:500 11px inherit;padding:3px 8px;border:1px solid #dfe1e6;background:#fafbfc;
+ color:#42526e;border-radius:3px;cursor:pointer}
+button:hover{background:#f4f5f7;border-color:#c1c7d0}
+input,textarea{font:inherit;font-size:12px;padding:4px 8px;border:1px solid #dfe1e6;
+ background:#fafbfc;border-radius:3px;color:#172b4d;min-width:0;flex:1}
+input:focus,textarea:focus{outline:none;background:#fff;border-color:#4c9aff;
+ box-shadow:0 0 0 2px rgba(76,154,255,.25)}
+.add{margin-top:18px;background:#fff;border-radius:4px;padding:14px;max-width:420px;
+ box-shadow:0 1px 2px rgba(9,30,66,.2)}
+.add h3{margin:0 0 9px;font-size:11px;font-weight:700;color:#5e6c84;
+ text-transform:uppercase;letter-spacing:.08em}
+.add input,.add textarea{width:100%;margin-bottom:8px;display:block}
+.add textarea{resize:vertical}
+.empty{color:#8993a4;font-size:12px;padding:8px 6px}
 """
+
+
+def _project_label(root: str) -> str:
+    """Name the project, not the path to its board directory."""
+    project = os.path.dirname(os.path.abspath(root))
+    home = os.path.expanduser("~")
+    if project.startswith(home):
+        return "~" + project[len(home):]
+    return os.path.basename(project) or project
+
+
+def _render_card(t, col: str) -> str:
+    """One ticket card: identity, body, comments, then actions behind a toggle."""
+    esc = html.escape
+    moves = "".join(
+        '<form class="inline" method="post" action="/move">'
+        '<input type="hidden" name="id" value="%s">'
+        '<input type="hidden" name="column" value="%s">'
+        "<button>%s</button></form>" % (esc(t.id), esc(c), esc(c))
+        for c in COLUMNS if c != col
+    )
+    assign_form = (
+        '<form class="inline" method="post" action="/assign">'
+        '<input type="hidden" name="id" value="%s">'
+        '<input name="owner" placeholder="Assign to (hint)" value="%s">'
+        "<button>Set</button></form>" % (esc(t.id), esc(t.owner or ""))
+    )
+    comment_form = (
+        '<form class="inline" method="post" action="/comment">'
+        '<input type="hidden" name="id" value="%s">'
+        '<input name="body" placeholder="Add a comment" required>'
+        "<button>Send</button></form>" % esc(t.id)
+    )
+
+    desc = '<div class="desc">%s</div>' % esc(t.description) if t.description else ""
+    owner = '<span class="own">%s</span>' % esc(t.owner) if t.owner else ""
+    count = ('<span class="cnt">%d comment%s</span>'
+             % (len(t.comments), "" if len(t.comments) == 1 else "s")) if t.comments else ""
+
+    comments = ""
+    if t.comments:
+        rows = "".join(
+            '<div class="c"><span class="who">%s</span><span class="when">%s</span>'
+            '<div class="body">%s</div></div>'
+            % (esc(c.by), esc(c.at.replace("T", " ").rstrip("Z")), esc(c.body))
+            for c in t.comments
+        )
+        comments = '<div class="comments">%s</div>' % rows
+
+    return (
+        '<div class="t">'
+        '<div class="title">%s</div>%s'
+        '<div class="meta"><span class="id">%s</span>%s%s</div>'
+        "%s"
+        '<details><summary>Actions</summary><div class="acts">'
+        '<div class="pills">%s</div>%s%s</div></details>'
+        "</div>"
+        % (esc(t.title), desc, esc(t.id), owner, count,
+           comments, moves, assign_form, comment_form)
+    )
 
 
 def render_board_html(root: str) -> str:
     esc = html.escape
     cols_html = []
+    total = 0
     for col in COLUMNS:
-        cards = []
-        for _, t in list_tickets(root, col):
-            moves = "".join(
-                '<form class="inline" method="post" action="/move">'
-                '<input type="hidden" name="id" value="%s">'
-                '<input type="hidden" name="column" value="%s">'
-                "<button>%s</button></form>" % (esc(t.id), esc(c), esc(c))
-                for c in COLUMNS if c != col
-            )
-            owner = '<span class="own">@%s</span>' % esc(t.owner) if t.owner else ""
-            comment_form = (
-                '<form class="inline" method="post" action="/comment">'
-                '<input type="hidden" name="id" value="%s">'
-                '<input name="body" placeholder="Comment" required>'
-                "<button>Add</button></form>" % esc(t.id)
-            )
-            assign_form = (
-                '<form class="inline" method="post" action="/assign">'
-                '<input type="hidden" name="id" value="%s">'
-                '<input name="owner" placeholder="Assign to (hint)" value="%s">'
-                "<button>Set</button></form>" % (esc(t.id), esc(t.owner or ""))
-            )
-            cards.append(
-                '<div class="t"><span class="id">%s</span> %s %s'
-                '<div class="meta">%d comment(s)</div><div>%s</div>'
-                "<div>%s</div><div>%s</div></div>"
-                % (esc(t.id), esc(t.title), owner, len(t.comments),
-                   moves, assign_form, comment_form)
-            )
+        rows = list_tickets(root, col)
+        total += len(rows)
+        cards = "".join(_render_card(t, col) for _, t in rows)
         cols_html.append(
-            '<div class="col"><h2>%s (%d)</h2>%s</div>'
-            % (esc(col), len(cards), "".join(cards) or '<div class="meta">empty</div>')
+            '<div class="col"><h2><span class="dot" style="background:%s"></span>%s'
+            '<span class="n">%d</span></h2>%s</div>'
+            % (COLUMN_ACCENT.get(col, "#5e6c84"), esc(col), len(rows),
+               cards or '<div class="empty">Nothing here</div>')
         )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         # A meta refresh reloads mid-typing and destroys whatever is in a form.
         # Poll instead, and skip the reload while the user is editing.
         "<script>setInterval(function(){"
@@ -460,12 +541,16 @@ def render_board_html(root: str) -> str:
         "for(var i=0;i<f.length;i++){if(f[i].value.trim())return;}"
         "location.reload();},3000);</script>"
         "<title>agent-board</title><style>%s</style></head><body>"
-        "<h1>agent-board</h1><div class='cols'>%s</div>"
-        "<div class='add'><form method='post' action='/new'>"
-        "<input name='title' placeholder='Ticket title' required>"
-        "<textarea name='desc' rows='3' placeholder='Description'></textarea>"
-        "<button>Add ticket</button></form></div>"
-        "</body></html>" % (PAGE_CSS, "".join(cols_html))
+        "<h1>agent-board</h1>"
+        "<p class='sub'>%d ticket%s &middot; %s</p>"
+        "<div class='cols'>%s</div>"
+        "<div class='add'><h3>New ticket</h3><form method='post' action='/new'>"
+        "<input name='title' placeholder='Title' required>"
+        "<textarea name='desc' rows='3' placeholder='Description (optional)'></textarea>"
+        "<button>Create</button></form></div>"
+        "</body></html>"
+        % (PAGE_CSS, total, "" if total == 1 else "s",
+           esc(_project_label(root)), "".join(cols_html))
     )
 
 
