@@ -25,6 +25,7 @@ board init                              # creates .agent-board/
 board new "Fix login redirect loop" --desc "401 doesn't clear the cookie"
 board list
 board take 1 --owner codex              # -> doing/
+board take 1 --owner codex --from todo  # refuse if someone already claimed it
 board comment 1 "Fixed in a1b2c3d" --by claude
 board move 1 review
 board assign 1 codex                    # advisory owner hint, no move
@@ -100,12 +101,14 @@ typing, so instructions must never travel over `cmux send`.
 
 - The **directory is the only truth**. There is no `status` field.
 - The board carries coordination; **git carries code**. Diffs never go in tickets.
-- Give each agent its own **git worktree** so they cannot corrupt each other.
+- Give each agent its own **git worktree** so they cannot corrupt each other — and point them all at one board with `AGENT_BOARD_ROOT=/abs/path/to/.agent-board`. Without it each worktree discovers its own copy, and moving a ticket in one is invisible to the others.
 
 ## Known limitations
 
 - **Watcher granularity.** `board watch` detects change by file mtime. Two edits landing within the same mtime tick are seen as one change, and because `os.replace` does not update mtime, a ticket that leaves a column and returns before the next poll is not re-flagged. Poll interval defaults to 5s.
-- **No claim arbitration.** `board take` does not lock a ticket. Two agents taking the same ticket at the same moment will both succeed and the last writer sets the owner. This is deliberate — a human is in the loop and will notice — so there are no leases and no expiry.
+- **Advisory locking only.** Mutations serialise on `fcntl.flock` over `.agent-board/.lock`, which the kernel releases when a process dies — no stale locks. But it is advisory: hand-editing a ticket file, or any tool that does not go through `board`, bypasses it entirely. POSIX only; `fcntl` does not exist on Windows.
+- **Unguarded claims still race.** `board take 1 --owner x` will happily claim a ticket someone else already took. Pass `--from todo` for a guarded transition that refuses unless the ticket is still where you expect. There are deliberately no leases and no expiry — the guard is transaction correctness, not the board learning about agents.
+- **flock over NFS is unreliable.** Keep the board on a local filesystem, not a NAS mount.
 - **Local only.** `board serve` binds `127.0.0.1` and has no authentication. Do not expose it to a network or a tailnet as-is.
 
 ## Why it is shaped this way

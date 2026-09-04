@@ -30,6 +30,36 @@ by review after the tests were green:
 3. **Frontmatter injection.** A newline in a title terminated frontmatter early and
    bricked `board list` and every web page. Scalars are now sanitised on write.
 
+## 2026-09-05 — concurrent mutation (found by Codex review)
+
+`take_ticket` and `set_owner` were read-modify-write. When earlier review caught
+`add_comment` doing the same thing, only that one function was fixed — the instance,
+not the class. Two reproducible failures followed: an assignment landing beside a
+comment **erased the comment**, and an assignment landing after a move **recreated the
+ticket in its old column**, giving one id two homes.
+
+The fix is one board-wide `fcntl.flock`. Three things a first attempt gets wrong:
+
+- **`add_comment` must take the lock too.** `O_APPEND` makes the append atomic, but a
+  writer that re-reads inside the lock can still be beaten by an append landing before
+  its write. Re-reading only moves the race window. Every mutation cooperates or none
+  of them are safe.
+- **The lock file is permanent and never replaced.** Unlink or atomically swap it and
+  waiters end up holding a different inode, so the lock silently stops working.
+- **The lock does not prevent double claims.** It serialises two takes; both still
+  succeed. That needs a separate guarded transition — `take --from todo` — inside the
+  same critical section. Comparing owner strings instead would turn the advisory hint
+  into authority and cross the design line.
+
+The earlier justification for refusing claim arbitration ("a human will notice") was
+weak: it assumes duplicate work becomes visible before it becomes expensive. A guarded
+transition is transaction correctness, and needs no leases and no agent knowledge.
+
+Worktrees were also contradictory — the README told you to give each agent one, while
+`find_root` only walks parents, so each worktree found a different board.
+`AGENT_BOARD_ROOT` now takes precedence and fails loudly rather than silently
+discovering the wrong board.
+
 ## Rulings, verbatim
 
 Extracted from the execution ledger.

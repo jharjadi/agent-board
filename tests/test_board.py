@@ -827,5 +827,136 @@ class TestUIComments(unittest.TestCase):
         self.assertIn("line two", page)
 
 
+class TestConcurrentMutation(unittest.TestCase):
+    """Every mutation must cooperate on one lock. These are real subprocess races."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        self.mod = os.path.dirname(os.path.abspath(board.__file__))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, body, *args):
+        import subprocess
+        code = "import sys; sys.path.insert(0, %r); import board\n%s" % (self.mod, body)
+        return subprocess.Popen([sys.executable, "-c", code, *[str(a) for a in args]])
+
+    def test_assignment_does_not_erase_a_concurrent_comment(self):
+        board.create_ticket(self.root, "target")
+        procs = [
+            self._run("board.add_comment(%r, '1', 'note ' + sys.argv[1], 'claude')" % self.root, i)
+            for i in range(6)
+        ] + [
+            self._run("board.set_owner(%r, '1', 'codex' + sys.argv[1])" % self.root, i)
+            for i in range(6)
+        ]
+        for p in procs:
+            p.wait()
+        _, path = board.find_ticket(self.root, "1")
+        self.assertEqual(len(board.load_ticket(path).comments), 6,
+                         "an assignment overwrote a comment")
+
+    def test_assignment_does_not_resurrect_a_moved_ticket(self):
+        board.create_ticket(self.root, "target")
+        procs = [self._run("board.move_ticket(%r, '1', 'review')" % self.root),
+                 self._run("board.set_owner(%r, '1', 'codex')" % self.root)]
+        for p in procs:
+            p.wait()
+        holders = [c for c in board.COLUMNS if board.list_tickets(self.root, c)]
+        self.assertEqual(len(holders), 1, "id 001 exists in %s" % holders)
+
+    def test_comment_does_not_recreate_an_old_path_after_a_move(self):
+        board.create_ticket(self.root, "target")
+        procs = [self._run("board.move_ticket(%r, '1', 'done')" % self.root),
+                 self._run("board.add_comment(%r, '1', 'late note', 'codex')" % self.root)]
+        for p in procs:
+            p.wait()
+        holders = [c for c in board.COLUMNS if board.list_tickets(self.root, c)]
+        self.assertEqual(len(holders), 1, "comment recreated the ticket in %s" % holders)
+
+    def test_take_does_not_deadlock_against_its_own_move(self):
+        board.create_ticket(self.root, "target")
+        board.take_ticket(self.root, "1", "codex")
+        col, path = board.find_ticket(self.root, "1")
+        self.assertEqual(col, "doing")
+        self.assertEqual(board.load_ticket(path).owner, "codex")
+
+    def test_lock_file_is_stable_across_operations(self):
+        board.create_ticket(self.root, "target")
+        lock = os.path.join(self.root, board.LOCK_NAME)
+        before = os.stat(lock).st_ino
+        board.set_owner(self.root, "1", "a")
+        board.move_ticket(self.root, "1", "review")
+        board.add_comment(self.root, "1", "x", "a")
+        self.assertEqual(os.stat(lock).st_ino, before,
+                         "lock inode changed - waiters would hold different locks")
+
+
+class TestGuardedClaim(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "target")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_take_from_expected_column_succeeds(self):
+        board.take_ticket(self.root, "1", "codex", expect="todo")
+        self.assertEqual(board.find_ticket(self.root, "1")[0], "doing")
+
+    def test_take_from_wrong_column_is_rejected(self):
+        board.take_ticket(self.root, "1", "codex")
+        with self.assertRaises(ValueError):
+            board.take_ticket(self.root, "1", "claude", expect="todo")
+
+    def test_second_claimant_does_not_steal_the_owner(self):
+        board.take_ticket(self.root, "1", "codex")
+        try:
+            board.take_ticket(self.root, "1", "claude", expect="todo")
+        except ValueError:
+            pass
+        _, path = board.find_ticket(self.root, "1")
+        self.assertEqual(board.load_ticket(path).owner, "codex")
+
+    def test_take_without_expect_is_unguarded(self):
+        board.take_ticket(self.root, "1", "codex")
+        board.take_ticket(self.root, "1", "claude")
+        _, path = board.find_ticket(self.root, "1")
+        self.assertEqual(board.load_ticket(path).owner, "claude")
+
+
+class TestBoardRootOverride(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        self.prev = os.environ.pop(board.ROOT_ENV, None)
+
+    def tearDown(self):
+        os.environ.pop(board.ROOT_ENV, None)
+        if self.prev is not None:
+            os.environ[board.ROOT_ENV] = self.prev
+        self.tmp.cleanup()
+
+    def test_env_override_wins_over_upward_discovery(self):
+        other = tempfile.TemporaryDirectory()
+        try:
+            nested = os.path.join(other.name, "a", "b")
+            os.makedirs(nested)
+            board.init_board(other.name)
+            os.environ[board.ROOT_ENV] = self.root
+            self.assertEqual(os.path.realpath(board.find_root(nested)),
+                             os.path.realpath(self.root))
+        finally:
+            other.cleanup()
+
+    def test_invalid_override_fails_loudly_without_fallback(self):
+        os.environ[board.ROOT_ENV] = "/nonexistent/nope/.agent-board"
+        with self.assertRaises(SystemExit):
+            board.find_root(self.tmp.name)
+
+
 if __name__ == "__main__":
     unittest.main()

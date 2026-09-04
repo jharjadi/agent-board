@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """agent-board - a file-backed kanban board for coordinating coding agents."""
 import argparse
+import contextlib
 import errno
+import fcntl
 import glob
 import html
 import json
@@ -141,11 +143,44 @@ def sanitize_scalar(value: str) -> str:
     return " ".join(cleaned.split()).strip()
 
 
+LOCK_NAME = ".lock"
+ROOT_ENV = "AGENT_BOARD_ROOT"
+
+
+@contextlib.contextmanager
+def board_lock(root: str):
+    """Serialise every mutation on one kernel-held lock.
+
+    fcntl.flock is released by the kernel when the process dies, so there is no
+    stale lock to expire and no pid file to reason about. The lock file is
+    permanent and never replaced — unlinking it would leave waiters holding a
+    different inode, and the lock would silently stop working.
+
+    Advisory only: anything that writes without taking it (a hand edit, another
+    tool) is not protected. That boundary is documented, not defended against.
+    """
+    os.makedirs(root, exist_ok=True)
+    fd = os.open(os.path.join(root, LOCK_NAME), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)          # closing releases the lock
+
+
 def init_board(base: str | None = None) -> str:
     base = base or os.getcwd()
     root = os.path.join(base, BOARD_DIR)
     for col in COLUMNS:
         os.makedirs(os.path.join(root, col), exist_ok=True)
+    # Create the lock up front so it has one stable inode for the board's life,
+    # and keep it out of git for boards that are committed.
+    lock = os.path.join(root, LOCK_NAME)
+    if not os.path.exists(lock):
+        os.close(os.open(lock, os.O_CREAT | os.O_RDWR, 0o644))
+    ignore = os.path.join(root, ".gitignore")
+    if not os.path.exists(ignore):
+        atomic_write(ignore, "%s\n" % LOCK_NAME)
     return root
 
 
@@ -223,6 +258,13 @@ def write_agents_doc(base: str | None = None) -> list[str]:
 
 
 def find_root(start: str | None = None) -> str:
+    override = os.environ.get(ROOT_ENV)
+    if override:
+        # Explicit wins over discovery, and a bad value is an error, never a
+        # silent fallback to some other board found by walking upward.
+        if not os.path.isdir(override):
+            sys.exit("%s=%s is not a directory" % (ROOT_ENV, override))
+        return os.path.abspath(override)
     path = os.path.abspath(start or os.getcwd())
     while True:
         candidate = os.path.join(path, BOARD_DIR)
@@ -332,7 +374,8 @@ def ticket_to_dict(column: str, t: Ticket) -> dict:
     return data
 
 
-def move_ticket(root: str, tid: str, column: str) -> str:
+def _move_locked(root: str, tid: str, column: str) -> str:
+    """Caller must already hold the board lock."""
     column = validate_column(column)
     _, path = find_ticket(root, tid)
     dest = os.path.join(root, column, os.path.basename(path))
@@ -341,33 +384,62 @@ def move_ticket(root: str, tid: str, column: str) -> str:
     return dest
 
 
-def take_ticket(root: str, tid: str, owner: str) -> str:
-    _, path = find_ticket(root, tid)
-    ticket = load_ticket(path)
-    ticket.owner = sanitize_scalar(owner)
-    atomic_write(path, render_ticket(ticket))
-    return move_ticket(root, tid, "doing")
+def move_ticket(root: str, tid: str, column: str) -> str:
+    with board_lock(root):
+        return _move_locked(root, tid, column)
+
+
+def take_ticket(root: str, tid: str, owner: str, expect: str | None = None) -> str:
+    """Claim a ticket.
+
+    With `expect`, the claim is a guarded transition: the ticket must currently
+    be in that column or the claim is refused. The lock alone does not prevent a
+    second claim — it only serialises two claims that both otherwise succeed —
+    so the condition is a separate check sharing the same critical section.
+
+    The owner field is never consulted for this. It is an advisory hint, and
+    treating it as authority would quietly make the board care who agents are.
+    """
+    with board_lock(root):
+        col, path = find_ticket(root, tid)
+        if expect is not None and col != validate_column(expect):
+            raise ValueError(
+                "ticket %s is in %r, not %r — already claimed?"
+                % (validate_id(tid), col, expect)
+            )
+        ticket = load_ticket(path)
+        ticket.owner = sanitize_scalar(owner) or None
+        atomic_write(path, render_ticket(ticket))
+        return _move_locked(root, tid, "doing")
 
 
 def set_owner(root: str, tid: str, owner: str) -> None:
     """Set the owner hint without moving the ticket.
 
     Purely advisory: the board routes nothing and does not know which agents
-    exist. It is a note from the human to whoever reads the column next. Pass
-    an empty string to clear it.
+    exist. Pass an empty string to clear it. Resolved and read inside the lock,
+    because a path or a body read before acquiring it may already be stale.
     """
-    _, path = find_ticket(root, tid)
-    ticket = load_ticket(path)
-    cleaned = sanitize_scalar(owner)
-    ticket.owner = cleaned or None
-    atomic_write(path, render_ticket(ticket))
+    with board_lock(root):
+        _, path = find_ticket(root, tid)
+        ticket = load_ticket(path)
+        ticket.owner = sanitize_scalar(owner) or None
+        atomic_write(path, render_ticket(ticket))
 
 
 def add_comment(root: str, tid: str, body: str, by: str) -> None:
-    _, path = find_ticket(root, tid)
-    block = "\n## comment — %s · %s\n%s\n" % (by, utc_now(), body.strip())
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(block)
+    """Append a comment.
+
+    O_APPEND makes the write itself atomic, but that is not enough on its own:
+    a writer holding the lock can read the ticket, this append can land, and the
+    writer's rewrite then erases it. A lock-free append can also recreate a
+    ticket at its old path after a concurrent move. Every mutation cooperates.
+    """
+    with board_lock(root):
+        _, path = find_ticket(root, tid)
+        block = "\n## comment — %s · %s\n%s\n" % (by, utc_now(), body.strip())
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(block)
 
 
 def column_snapshot(root: str, column: str) -> dict[str, float]:
@@ -649,6 +721,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("take")
     p.add_argument("id")
     p.add_argument("--owner", required=True)
+    p.add_argument("--from", dest="expect", default=None, metavar="COLUMN",
+                   help="only claim if the ticket is still in COLUMN "
+                        "(refuses a ticket someone else already took)")
 
     p = sub.add_parser("move")
     p.add_argument("id")
@@ -683,6 +758,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     root = find_root()
+    if os.environ.get(ROOT_ENV):
+        print("board: %s (via %s)" % (root, ROOT_ENV), file=sys.stderr)
     try:
         if args.cmd == "new":
             print(create_ticket(root, args.title, args.desc, args.column, args.owner))
@@ -701,7 +778,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("[%s] %s" % (col, path))
                 print(render_ticket(ticket))
         elif args.cmd == "take":
-            take_ticket(root, args.id, args.owner)
+            take_ticket(root, args.id, args.owner, expect=args.expect)
             print("%s -> doing (@%s)" % (validate_id(args.id), args.owner))
         elif args.cmd == "move":
             move_ticket(root, args.id, args.column)
