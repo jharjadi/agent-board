@@ -596,5 +596,78 @@ class TestWebUI(unittest.TestCase):
             server.shutdown()
 
 
+
+class TestAgentsDoc(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def read(self, name):
+        with open(os.path.join(self.base, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_creates_agents_md_when_absent(self):
+        touched = board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md")
+        self.assertIn(board.AGENTS_BEGIN, text)
+        self.assertIn(board.AGENTS_END, text)
+        self.assertIn("board take", text)
+        self.assertIn(os.path.join(self.base, "AGENTS.md"), touched)
+
+    def test_appends_without_clobbering_existing(self):
+        original = "# nt-form-core\n\nExisting project rules.\n"
+        with open(os.path.join(self.base, "AGENTS.md"), "w", encoding="utf-8") as fh:
+            fh.write(original)
+        board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md")
+        self.assertIn("Existing project rules.", text)
+        self.assertIn(board.AGENTS_BEGIN, text)
+        self.assertTrue(text.index("Existing project rules.") < text.index(board.AGENTS_BEGIN))
+
+    def test_idempotent_block_appears_once(self):
+        board.write_agents_doc(self.base)
+        board.write_agents_doc(self.base)
+        board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md")
+        self.assertEqual(text.count(board.AGENTS_BEGIN), 1)
+        self.assertEqual(text.count(board.AGENTS_END), 1)
+
+    def test_replaces_stale_block_in_place(self):
+        path = os.path.join(self.base, "AGENTS.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("keep me\n\n%s\nOLD CONTENT\n%s\n\ntrailing\n"
+                     % (board.AGENTS_BEGIN, board.AGENTS_END))
+        board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md")
+        self.assertNotIn("OLD CONTENT", text)
+        self.assertIn("keep me", text)
+        self.assertIn("trailing", text)
+        self.assertEqual(text.count(board.AGENTS_BEGIN), 1)
+
+    def test_symlinks_claude_md_when_absent(self):
+        board.write_agents_doc(self.base)
+        claude = os.path.join(self.base, "CLAUDE.md")
+        self.assertTrue(os.path.islink(claude))
+        self.assertEqual(os.readlink(claude), "AGENTS.md")
+
+    def test_appends_to_existing_claude_md_without_clobbering(self):
+        with open(os.path.join(self.base, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+            fh.write("# Claude rules\n\nDo not delete me.\n")
+        board.write_agents_doc(self.base)
+        text = self.read("CLAUDE.md")
+        self.assertFalse(os.path.islink(os.path.join(self.base, "CLAUDE.md")))
+        self.assertIn("Do not delete me.", text)
+        self.assertIn(board.AGENTS_BEGIN, text)
+
+    def test_block_is_role_neutral(self):
+        board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md").lower()
+        self.assertNotIn("you are the reviewer", text)
+        self.assertIn("ask", text)
+
+
 if __name__ == "__main__":
     unittest.main()

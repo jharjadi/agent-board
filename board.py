@@ -148,6 +148,79 @@ def init_board(base: str | None = None) -> str:
     return root
 
 
+AGENTS_BEGIN = "<!-- agent-board:begin -->"
+AGENTS_END = "<!-- agent-board:end -->"
+
+
+def agents_block() -> str:
+    """The instructions an agent needs to discover and use this board.
+
+    Deliberately role-neutral: every agent in the project reads the same file,
+    so it cannot name one agent's column.
+    """
+    return """%s
+## Task board
+
+This project uses agent-board. The board lives in `.agent-board/`; each column
+is a directory and each ticket is a markdown file.
+
+    board list                        see the whole board
+    board list todo                   see one column
+    board show 7                      read a ticket, with its comments
+    board take 7 --owner <you>        claim it (moves to doing/)
+    board comment 7 "..." --by <you>  report back on it
+    board move 7 review               hand it on
+
+Use your own name or role as `<you>` — whatever the user calls you. If the user
+has not told you which column is yours, ask, or take the top of `todo`. Read the
+ticket before starting, and report with `board comment` rather than only in chat,
+so the next agent sees what you did.
+%s""" % (AGENTS_BEGIN, AGENTS_END)
+
+
+def _upsert_block(path: str, block: str) -> None:
+    """Insert or replace the delimited block, preserving everything else."""
+    existing = ""
+    if os.path.exists(path) and not os.path.islink(path):
+        with open(path, encoding="utf-8") as fh:
+            existing = fh.read()
+    if AGENTS_BEGIN in existing and AGENTS_END in existing:
+        head = existing.split(AGENTS_BEGIN)[0]
+        tail = existing.split(AGENTS_END, 1)[1]
+        text = head + block + tail
+    elif existing.strip():
+        text = existing.rstrip("\n") + "\n\n" + block + "\n"
+    else:
+        text = block + "\n"
+    atomic_write(path, text)
+
+
+def write_agents_doc(base: str | None = None) -> list[str]:
+    """Teach agents that this board exists, whatever launches them.
+
+    AGENTS.md is read by Codex and OpenCode, CLAUDE.md by Claude Code — from a
+    VS Code extension, a cmux terminal or a bare shell alike. Writing both is
+    what makes the board discoverable without the user having to say so.
+    """
+    base = base or os.getcwd()
+    block = agents_block()
+    touched = []
+
+    agents_path = os.path.join(base, "AGENTS.md")
+    _upsert_block(agents_path, block)
+    touched.append(agents_path)
+
+    claude_path = os.path.join(base, "CLAUDE.md")
+    if not os.path.lexists(claude_path):
+        os.symlink("AGENTS.md", claude_path)
+        touched.append(claude_path)
+    elif not os.path.islink(claude_path):
+        # A real file with its own content — append rather than clobber it.
+        _upsert_block(claude_path, block)
+        touched.append(claude_path)
+    return touched
+
+
 def find_root(start: str | None = None) -> str:
     path = os.path.abspath(start or os.getcwd())
     while True:
@@ -429,7 +502,9 @@ def main(argv: list[str] | None = None) -> int:
                                      description="file-backed kanban for coding agents")
     sub = parser.add_subparsers(dest="cmd")
 
-    sub.add_parser("init")
+    p = sub.add_parser("init")
+    p.add_argument("--no-agents", action="store_true",
+                   help="only create .agent-board/; do not touch AGENTS.md or CLAUDE.md")
 
     p = sub.add_parser("new")
     p.add_argument("title")
@@ -472,6 +547,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "init":
         print("initialised %s" % init_board())
+        if not args.no_agents:
+            for path in write_agents_doc():
+                print("wrote %s" % path)
         return 0
 
     root = find_root()
