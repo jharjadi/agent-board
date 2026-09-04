@@ -5,7 +5,6 @@ import os
 import re
 import sys
 import tempfile
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -165,7 +164,6 @@ def atomic_write(path: str, text: str) -> None:
 
 
 MAX_ID_ATTEMPTS = 5
-_create_lock = threading.Lock()
 
 
 def _all_ticket_paths(root: str) -> list[str]:
@@ -178,7 +176,8 @@ def _all_ticket_paths(root: str) -> list[str]:
 def next_id(root: str) -> str:
     highest = 0
     for path in _all_ticket_paths(root):
-        head = os.path.basename(path).split("-", 1)[0]
+        stem = os.path.splitext(os.path.basename(path))[0]
+        head = stem.split("-", 1)[0]
         if head.isdigit():
             highest = max(highest, int(head))
     return str(highest + 1).zfill(3)
@@ -187,17 +186,23 @@ def next_id(root: str) -> str:
 def create_ticket(root: str, title: str, description: str = "",
                   column: str = "todo", owner: str | None = None) -> str:
     column = validate_column(column)
-    with _create_lock:
-        for _ in range(MAX_ID_ATTEMPTS):
-            tid = next_id(root)
-            path = os.path.join(root, column, "%s-%s.md" % (tid, slugify(title)))
+    for _ in range(MAX_ID_ATTEMPTS):
+        tid = next_id(root)
+        id_path = os.path.join(root, column, "%s.md" % tid)
+        try:
+            fd = os.open(id_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            continue
+        try:
             ticket = Ticket(id=tid, title=title, created=utc_now(),
                             description=description, owner=owner)
-            try:
-                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            except FileExistsError:
-                continue
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(render_ticket(ticket))
+            final_path = os.path.join(root, column, "%s-%s.md" % (tid, slugify(title)))
+            os.rename(id_path, final_path)
             return tid
+        except BaseException:
+            if os.path.exists(id_path):
+                os.unlink(id_path)
+            raise
     raise RuntimeError("could not allocate a ticket id after %d attempts" % MAX_ID_ATTEMPTS)

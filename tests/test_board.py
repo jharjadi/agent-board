@@ -1,7 +1,8 @@
+import json
 import os
+import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -143,24 +144,18 @@ class TestCreate(unittest.TestCase):
             board.create_ticket(root, "a", column="done")
             self.assertEqual(board.create_ticket(root, "b"), "002")
 
-    def test_concurrent_create_never_duplicates(self):
+    def test_concurrent_create_across_processes_never_duplicates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = board.init_board(tmp)
-            results = []
-            lock = threading.Lock()
-
-            def make(n):
-                tid = board.create_ticket(root, "ticket %d" % n)
-                with lock:
-                    results.append(tid)
-
-            threads = [threading.Thread(target=make, args=(i,)) for i in range(10)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-            self.assertEqual(len(results), 10)
-            self.assertEqual(len(set(results)), 10, "duplicate ids: %s" % results)
+            code = (
+                "import sys; sys.path.insert(0, %r); import board; "
+                "print(board.create_ticket(%r, 'ticket ' + sys.argv[1]))"
+            ) % (os.path.dirname(os.path.abspath(board.__file__)), root)
+            procs = [subprocess.Popen([sys.executable, "-c", code, str(i)],
+                                      stdout=subprocess.PIPE, text=True) for i in range(8)]
+            ids = [p.communicate()[0].strip() for p in procs]
+            self.assertEqual(len(ids), 8)
+            self.assertEqual(len(set(ids)), 8, "duplicate ids: %s" % ids)
 
     def test_rejects_bad_column(self):
         with tempfile.TemporaryDirectory() as tmp:
