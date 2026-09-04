@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """agent-board - a file-backed kanban board for coordinating coding agents."""
+import glob
 import os
 import re
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -160,3 +162,42 @@ def atomic_write(path: str, text: str) -> None:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+
+
+MAX_ID_ATTEMPTS = 5
+_create_lock = threading.Lock()
+
+
+def _all_ticket_paths(root: str) -> list[str]:
+    paths = []
+    for col in COLUMNS:
+        paths.extend(glob.glob(os.path.join(root, col, "*.md")))
+    return paths
+
+
+def next_id(root: str) -> str:
+    highest = 0
+    for path in _all_ticket_paths(root):
+        head = os.path.basename(path).split("-", 1)[0]
+        if head.isdigit():
+            highest = max(highest, int(head))
+    return str(highest + 1).zfill(3)
+
+
+def create_ticket(root: str, title: str, description: str = "",
+                  column: str = "todo", owner: str | None = None) -> str:
+    column = validate_column(column)
+    with _create_lock:
+        for _ in range(MAX_ID_ATTEMPTS):
+            tid = next_id(root)
+            path = os.path.join(root, column, "%s-%s.md" % (tid, slugify(title)))
+            ticket = Ticket(id=tid, title=title, created=utc_now(),
+                            description=description, owner=owner)
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            except FileExistsError:
+                continue
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(render_ticket(ticket))
+            return tid
+    raise RuntimeError("could not allocate a ticket id after %d attempts" % MAX_ID_ATTEMPTS)

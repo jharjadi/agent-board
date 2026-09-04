@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -118,6 +119,54 @@ class TestLayout(unittest.TestCase):
             board.validate_id("123\n")
         with self.assertRaises(ValueError):
             board.validate_id("1\n2")
+
+
+class TestCreate(unittest.TestCase):
+    def test_creates_file_in_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            tid = board.create_ticket(root, "Fix login redirect loop", "body text")
+            self.assertEqual(tid, "001")
+            self.assertEqual(os.listdir(os.path.join(root, "todo")),
+                             ["001-fix-login-redirect-loop.md"])
+
+    def test_ids_increment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            self.assertEqual(board.create_ticket(root, "one"), "001")
+            self.assertEqual(board.create_ticket(root, "two"), "002")
+            self.assertEqual(board.create_ticket(root, "three"), "003")
+
+    def test_ids_account_for_all_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            board.create_ticket(root, "a", column="done")
+            self.assertEqual(board.create_ticket(root, "b"), "002")
+
+    def test_concurrent_create_never_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            results = []
+            lock = threading.Lock()
+
+            def make(n):
+                tid = board.create_ticket(root, "ticket %d" % n)
+                with lock:
+                    results.append(tid)
+
+            threads = [threading.Thread(target=make, args=(i,)) for i in range(10)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(len(results), 10)
+            self.assertEqual(len(set(results)), 10, "duplicate ids: %s" % results)
+
+    def test_rejects_bad_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = board.init_board(tmp)
+            with self.assertRaises(ValueError):
+                board.create_ticket(root, "x", column="../escape")
 
 
 if __name__ == "__main__":
