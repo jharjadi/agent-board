@@ -113,6 +113,12 @@ class TestLayout(unittest.TestCase):
                 self.assertEqual(fh.read(), "two")
             self.assertEqual(os.listdir(tmp), ["f.md"])
 
+    def test_validate_id_rejects_trailing_newline(self):
+        with self.assertRaises(ValueError):
+            board.validate_id("123\n")
+        with self.assertRaises(ValueError):
+            board.validate_id("1\n2")
+
 
 if __name__ == "__main__":
     unittest.main()

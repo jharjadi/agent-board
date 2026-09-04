@@ -103,7 +103,7 @@ def render_ticket(t: Ticket) -> str:
 
 
 BOARD_DIR = ".agent-board"
-ID_RE = re.compile(r"^[0-9]{1,6}$")
+ID_RE = re.compile(r"^[0-9]{1,6}\Z")
 
 
 def utc_now() -> str:
