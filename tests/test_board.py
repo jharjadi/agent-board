@@ -268,6 +268,19 @@ class TestMutate(unittest.TestCase):
         _, path = board.find_ticket(self.root, "1")
         self.assertEqual(len(board.load_ticket(path).comments), 1)
 
+    def test_concurrent_comments_are_not_lost(self):
+        board.create_ticket(self.root, "concurrent target", "desc")
+        mod_dir = os.path.dirname(os.path.abspath(board.__file__))
+        code = (
+            "import sys; sys.path.insert(0, %r); import board; "
+            "board.add_comment(%r, '1', 'note ' + sys.argv[1], 'agent' + sys.argv[1])"
+        ) % (mod_dir, self.root)
+        procs = [subprocess.Popen([sys.executable, "-c", code, str(i)]) for i in range(8)]
+        for p in procs:
+            p.wait()
+        _, path = board.find_ticket(self.root, "1")
+        self.assertEqual(len(board.load_ticket(path).comments), 8)
+
 
 if __name__ == "__main__":
     unittest.main()

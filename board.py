@@ -258,6 +258,6 @@ def take_ticket(root: str, tid: str, owner: str) -> str:
 
 def add_comment(root: str, tid: str, body: str, by: str) -> None:
     _, path = find_ticket(root, tid)
-    ticket = load_ticket(path)
-    ticket.comments.append(Comment(by=by, at=utc_now(), body=body))
-    atomic_write(path, render_ticket(ticket))
+    block = "\n## comment — %s · %s\n%s\n" % (by, utc_now(), body.strip())
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(block)
