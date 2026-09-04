@@ -566,6 +566,35 @@ class TestWebUI(unittest.TestCase):
         finally:
             server.shutdown()
 
+    def test_comment_form_present_and_reachable(self):
+        """POST /comment must be wired up from the UI: each ticket card
+        needs a form posting to /comment with a body field and the ticket id."""
+        tid = board.create_ticket(self.root, "commentable task")
+        page = board.render_board_html(self.root)
+        self.assertIn('action="/comment"', page)
+        self.assertIn('name="body"', page)
+        self.assertIn('name="id" value="%s"' % tid, page)
+
+        handler = board._make_handler(self.root)
+        server = board.HTTPServer(("127.0.0.1", 0), handler)
+        port = server.server_port
+        srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        srv_thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port)
+            body = "id=%s&body=looks+good" % tid
+            conn.request("POST", "/comment", body, {"Content-Length": str(len(body))})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 303)
+            resp.read()
+            conn.close()
+            _, path = board.find_ticket(self.root, tid)
+            t = board.load_ticket(path)
+            self.assertEqual(len(t.comments), 1)
+            self.assertEqual(t.comments[0].body, "looks good")
+        finally:
+            server.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -338,10 +338,16 @@ def render_board_html(root: str) -> str:
                 for c in COLUMNS if c != col
             )
             owner = '<span class="own">@%s</span>' % esc(t.owner) if t.owner else ""
+            comment_form = (
+                '<form class="inline" method="post" action="/comment">'
+                '<input type="hidden" name="id" value="%s">'
+                '<input name="body" placeholder="Comment" required>'
+                "<button>Add</button></form>" % esc(t.id)
+            )
             cards.append(
                 '<div class="t"><span class="id">%s</span> %s %s'
-                '<div class="meta">%d comment(s)</div><div>%s</div></div>'
-                % (esc(t.id), esc(t.title), owner, len(t.comments), moves)
+                '<div class="meta">%d comment(s)</div><div>%s</div><div>%s</div></div>'
+                % (esc(t.id), esc(t.title), owner, len(t.comments), moves, comment_form)
             )
         cols_html.append(
             '<div class="col"><h2>%s (%d)</h2>%s</div>'
