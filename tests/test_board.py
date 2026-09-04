@@ -719,5 +719,66 @@ class TestRefreshAndPort(unittest.TestCase):
             sock.close()
 
 
+
+class TestOwnerHint(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "needs an owner")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_sets_owner_without_moving_column(self):
+        board.set_owner(self.root, "1", "codex")
+        col, path = board.find_ticket(self.root, "1")
+        self.assertEqual(col, "todo")
+        self.assertEqual(board.load_ticket(path).owner, "codex")
+
+    def test_empty_owner_clears_the_hint(self):
+        board.set_owner(self.root, "1", "codex")
+        board.set_owner(self.root, "1", "")
+        _, path = board.find_ticket(self.root, "1")
+        self.assertIsNone(board.load_ticket(path).owner)
+
+    def test_owner_is_sanitized(self):
+        board.set_owner(self.root, "1", "cod\nex\n---\ntitle: hacked")
+        _, path = board.find_ticket(self.root, "1")
+        t = board.load_ticket(path)
+        self.assertNotIn("\n", t.owner or "")
+        self.assertEqual(t.title, "needs an owner")
+
+    def test_preserves_comments_and_description(self):
+        board.add_comment(self.root, "1", "a note", "claude")
+        board.set_owner(self.root, "1", "codex")
+        _, path = board.find_ticket(self.root, "1")
+        t = board.load_ticket(path)
+        self.assertEqual(len(t.comments), 1)
+        self.assertEqual(t.description, "")
+        self.assertEqual(t.comments[0].body, "a note")
+
+    def test_unknown_id_raises(self):
+        with self.assertRaises(KeyError):
+            board.set_owner(self.root, "99", "codex")
+
+    def test_ui_renders_an_assign_form_per_card(self):
+        page = board.render_board_html(self.root)
+        self.assertIn('action="/assign"', page)
+        self.assertIn('name="owner"', page)
+
+    def test_cli_assign(self):
+        cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = board.main(["assign", "1", "codex"])
+            self.assertEqual(code, 0)
+            _, path = board.find_ticket(self.root, "1")
+            self.assertEqual(board.load_ticket(path).owner, "codex")
+        finally:
+            os.chdir(cwd)
+
+
 if __name__ == "__main__":
     unittest.main()

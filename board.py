@@ -349,6 +349,20 @@ def take_ticket(root: str, tid: str, owner: str) -> str:
     return move_ticket(root, tid, "doing")
 
 
+def set_owner(root: str, tid: str, owner: str) -> None:
+    """Set the owner hint without moving the ticket.
+
+    Purely advisory: the board routes nothing and does not know which agents
+    exist. It is a note from the human to whoever reads the column next. Pass
+    an empty string to clear it.
+    """
+    _, path = find_ticket(root, tid)
+    ticket = load_ticket(path)
+    cleaned = sanitize_scalar(owner)
+    ticket.owner = cleaned or None
+    atomic_write(path, render_ticket(ticket))
+
+
 def add_comment(root: str, tid: str, body: str, by: str) -> None:
     _, path = find_ticket(root, tid)
     block = "\n## comment — %s · %s\n%s\n" % (by, utc_now(), body.strip())
@@ -418,10 +432,18 @@ def render_board_html(root: str) -> str:
                 '<input name="body" placeholder="Comment" required>'
                 "<button>Add</button></form>" % esc(t.id)
             )
+            assign_form = (
+                '<form class="inline" method="post" action="/assign">'
+                '<input type="hidden" name="id" value="%s">'
+                '<input name="owner" placeholder="Assign to (hint)" value="%s">'
+                "<button>Set</button></form>" % (esc(t.id), esc(t.owner or ""))
+            )
             cards.append(
                 '<div class="t"><span class="id">%s</span> %s %s'
-                '<div class="meta">%d comment(s)</div><div>%s</div><div>%s</div></div>'
-                % (esc(t.id), esc(t.title), owner, len(t.comments), moves, comment_form)
+                '<div class="meta">%d comment(s)</div><div>%s</div>'
+                "<div>%s</div><div>%s</div></div>"
+                % (esc(t.id), esc(t.title), owner, len(t.comments),
+                   moves, assign_form, comment_form)
             )
         cols_html.append(
             '<div class="col"><h2>%s (%d)</h2>%s</div>'
@@ -482,6 +504,9 @@ def _make_handler(root: str):
                 elif path == "/move":
                     move_ticket(root, (fields.get("id") or [""])[0],
                                 (fields.get("column") or [""])[0])
+                elif path == "/assign":
+                    set_owner(root, (fields.get("id") or [""])[0],
+                              (fields.get("owner") or [""])[0])
                 elif path == "/comment":
                     add_comment(root, (fields.get("id") or [""])[0],
                                 (fields.get("body") or [""])[0],
@@ -544,6 +569,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("id")
     p.add_argument("column")
 
+    p = sub.add_parser("assign")
+    p.add_argument("id")
+    p.add_argument("owner", help="name or role; pass '' to clear the hint")
+
     p = sub.add_parser("comment")
     p.add_argument("id")
     p.add_argument("body")
@@ -592,6 +621,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "move":
             move_ticket(root, args.id, args.column)
             print("%s -> %s" % (validate_id(args.id), args.column))
+        elif args.cmd == "assign":
+            set_owner(root, args.id, args.owner)
+            print("%s owner -> %s" % (validate_id(args.id), args.owner or "(cleared)"))
         elif args.cmd == "comment":
             add_comment(root, args.id, args.body, args.by)
             print("comment added to %s" % validate_id(args.id))
