@@ -382,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(args.interval)
         elif args.cmd == "serve":
             serve(root, args.port)
-    except (KeyError, ValueError) as exc:
+    except (KeyError, ValueError, RuntimeError, OSError) as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
     return 0

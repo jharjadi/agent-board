@@ -390,6 +390,18 @@ class TestCLI(unittest.TestCase):
         code, _ = self.run_cli("move", "1", "backlog")
         self.assertNotEqual(code, 0)
 
+    def test_unwritable_board_exits_two_not_traceback(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores permission bits")
+        self.run_cli("init")
+        todo = os.path.join(os.getcwd(), board.BOARD_DIR, "todo")
+        os.chmod(todo, 0o500)
+        try:
+            code, _ = self.run_cli("new", "should fail cleanly")
+            self.assertEqual(code, 2)
+        finally:
+            os.chmod(todo, 0o700)
+
 
 if __name__ == "__main__":
     unittest.main()
