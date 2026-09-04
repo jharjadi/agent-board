@@ -1235,7 +1235,7 @@ git commit -m "feat: local web UI as a pure projection over the filesystem"
 
 - [ ] **Step 1: Run the smoke test to verify it fails**
 
-Run: `cd /tmp && rm -rf bt && mkdir bt && cd bt && ~/Source/bronhills/agent-board/board init`
+Run: `cd "$(mktemp -d)" && $REPO/board init`
 Expected: FAIL — `no such file or directory`
 
 - [ ] **Step 2: Create the shim**
@@ -1334,7 +1334,7 @@ See `docs/superpowers/specs/2026-09-04-agent-board-design.md`.
 
 - [ ] **Step 4: Run the smoke test to verify it passes**
 
-Run: `cd /tmp/bt && ~/Source/bronhills/agent-board/board init && ~/Source/bronhills/agent-board/board new "smoke test" && ~/Source/bronhills/agent-board/board list`
+Run: `cd /tmp/bt && $REPO/board init && $REPO/board new "smoke test" && $REPO/board list`
 Expected: prints `001  todo     smoke test`
 
 - [ ] **Step 5: Commit and push**

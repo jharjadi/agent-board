@@ -10,9 +10,12 @@ No dependencies. Python 3.11+.
 ## Install
 
 ```bash
-git clone git@github.com:jharjadi/agent-board.git ~/Source/agent-board
-ln -s ~/Source/agent-board/board /usr/local/bin/board
+git clone https://github.com/jharjadi/agent-board.git
+ln -s "$PWD/agent-board/board" ~/.local/bin/board   # or /usr/local/bin
 ```
+
+Nothing is ever copied into your projects. Install once; each project gets only its
+own `.agent-board/` state.
 
 ## Use
 
@@ -105,6 +108,31 @@ typing, so instructions must never travel over `cmux send`.
 - **No claim arbitration.** `board take` does not lock a ticket. Two agents taking the same ticket at the same moment will both succeed and the last writer sets the owner. This is deliberate — a human is in the loop and will notice — so there are no leases and no expiry.
 - **Local only.** `board serve` binds `127.0.0.1` and has no authentication. Do not expose it to a network or a tailnet as-is.
 
+## Why it is shaped this way
+
+**Read [`docs/decisions.md`](docs/decisions.md) before proposing a feature.** It lists
+what was deliberately rejected and why: an agent registry, a scheduler, leases, JSON
+tickets, SQLite, a `status` field, presence indicators. Several look like obvious
+improvements. They are what turns a task board into an expensive orchestrator — the
+predecessor to this tool burned tokens on agents deciding who should do the work
+rather than doing it.
+
+The line that matters: **the board never knows which agents exist.**
+
+Also there: the three defects that shipped past a green test suite and were caught by
+review, including an id-allocation scheme that was wrong twice.
+
 ## Design
 
-See `docs/superpowers/specs/2026-09-04-agent-board-design.md`.
+- [`docs/decisions.md`](docs/decisions.md) — what was rejected, and why
+- [`docs/superpowers/specs/2026-09-04-agent-board-design.md`](docs/superpowers/specs/2026-09-04-agent-board-design.md) — the design
+- [`docs/superpowers/plans/2026-09-04-agent-board.md`](docs/superpowers/plans/2026-09-04-agent-board.md) — how it was built
+
+## Scope
+
+Built for one person's workflow and shared in case the reasoning is useful. Issues and
+forks welcome; **feature PRs probably not** — the non-goals in `docs/decisions.md` are
+the design, not a backlog. If you need it to work differently, forking a single
+dependency-free file is genuinely the easier path.
+
+MIT licensed.
