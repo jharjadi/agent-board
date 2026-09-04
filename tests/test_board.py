@@ -544,6 +544,28 @@ class TestWebUI(unittest.TestCase):
         finally:
             server.shutdown()
 
+    def test_corrupt_ticket_file_returns_500_not_dead_connection(self):
+        """A deliberately corrupt .md file should yield an HTTP error
+        response from do_GET, not a dead connection plus a traceback."""
+        board.create_ticket(self.root, "fine ticket")
+        corrupt_path = os.path.join(self.root, "todo", "999-corrupt.md")
+        with open(corrupt_path, "w", encoding="utf-8") as fh:
+            fh.write("this is not valid frontmatter at all")
+        handler = board._make_handler(self.root)
+        server = board.HTTPServer(("127.0.0.1", 0), handler)
+        port = server.server_port
+        srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        srv_thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port)
+            conn.request("GET", "/")
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 500)
+            resp.read()
+            conn.close()
+        finally:
+            server.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()
