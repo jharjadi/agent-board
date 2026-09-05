@@ -75,11 +75,43 @@ made of LLM calls is what makes multi-agent setups expensive.
 
 ### Standing roles
 
-Give an agent a column and leave it there:
+Give an agent a column and leave it there. **Say it once, or the nudge alone is not
+enough.** In a rehearsal, a Codex that had only been nudged with "Anything in review?"
+found the ticket, read it, and answered the question literally: yes, there is one. It
+reviewed nothing, because the agents block is role-neutral on purpose and nothing had
+told it whose job the review column was. This text fixed it for the rest of the
+session:
 
-> You are the reviewer. Watch `.agent-board/review/`. When a ticket appears, read it,
-> review the branch named in its frontmatter, comment with `board comment`, then move
-> it to `done` or `blocked`.
+> You are the reviewer, standing role. When a ticket is in review: read it with
+> `board show`, review the branch it names, run the tests, post your verdict with
+> `board comment <id> "..." --by codex`, then `board move <id> done` if approved or
+> `board move <id> blocked` with what must change. Never edit code yourself.
+
+From then on "Anything in review?" is the whole handoff.
+
+### The reviewer nudges back
+
+The agent that posts is the one that knows something changed, so it does the
+nudging. Tell it once where you are:
+
+> After you post, run `cmux send --workspace <ws> --surface <surface> "board: ticket
+> N has a reply from codex"`, then `cmux send-key ... enter`. Do not put your answer
+> in the nudge; the board carries it.
+
+Codex ran that from inside its sandbox and the nudge arrived as a user turn in the
+other agent's session. No human relayed anything. `cmux identify --json` in a pane
+tells you its refs.
+
+### Launching an agent in a pane
+
+```bash
+cmux workspace create --name reviewer --cwd /abs/path/to/project --focus false \
+  --command '/bin/zsh -lc "exec /opt/homebrew/bin/codex -a never -s workspace-write"'
+```
+
+Codex reads the project's `AGENTS.md` at start, so it finds the board on its own.
+`-a never -s workspace-write` is the current spelling of what `--full-auto` used to
+mean. The login shell is what puts `board` on its `PATH`.
 
 ### Auto-nudge (optional)
 
@@ -97,6 +129,18 @@ and version-controlled. An agent running with `--yolo` or
 `--dangerously-skip-permissions` cannot tell injected keystrokes from the human
 typing, so instructions must never travel over `cmux send`.
 
+## Replacing `.agent-bridge`
+
+This board replaces the `.agent-bridge` mailbox that preceded it. Every bridge concept
+has a home here or a reason it does not, and the two role files and two memory files
+the bridge grew are worth keeping in your project as they are. The steps, the mapping,
+and the distilled role contracts are in
+[`docs/migrating-from-agent-bridge.md`](docs/migrating-from-agent-bridge.md).
+
+One gap is real today: a question to another agent that is not about a ticket has no
+home yet. Threads and an inbox are specified and planned, see
+[`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md).
+
 ## Rules
 
 - The **directory is the only truth**. There is no `status` field.
@@ -110,6 +154,7 @@ typing, so instructions must never travel over `cmux send`.
 - **Unguarded claims still race.** `board take 1 --owner x` will happily claim a ticket someone else already took. Pass `--from todo` for a guarded transition that refuses unless the ticket is still where you expect. There are deliberately no leases and no expiry — the guard is transaction correctness, not the board learning about agents.
 - **flock over NFS is unreliable.** Keep the board on a local filesystem, not a NAS mount.
 - **Local only.** `board serve` binds `127.0.0.1` and has no authentication. Do not expose it to a network or a tailnet as-is.
+- **The board lives in the same repo as the code.** A ticket moved while you are on a feature branch is a change on that branch. Commit board state on the main branch, or give each agent a worktree and one shared board via `AGENT_BOARD_ROOT`.
 
 ## Why it is shaped this way
 
@@ -130,6 +175,8 @@ review, including an id-allocation scheme that was wrong twice.
 - [`docs/decisions.md`](docs/decisions.md) — what was rejected, and why
 - [`docs/superpowers/specs/2026-09-04-agent-board-design.md`](docs/superpowers/specs/2026-09-04-agent-board-design.md) — the design
 - [`docs/superpowers/plans/2026-09-04-agent-board.md`](docs/superpowers/plans/2026-09-04-agent-board.md) — how it was built
+- [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md) — threads and the inbox, specified, not yet built
+- [`docs/migrating-from-agent-bridge.md`](docs/migrating-from-agent-bridge.md) — replacing `.agent-bridge`, and what it taught
 
 ## Scope
 
