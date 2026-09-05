@@ -1012,3 +1012,166 @@ class TestAllocatorLock(unittest.TestCase):
         col, path = board.find_ticket(self.root, "7")
         self.assertEqual(col, "doing")
         self.assertTrue(path.endswith("007.md"))
+
+
+OLD_AUTHOR_WITH_SEPARATOR = '''---
+id: "001"
+title: Old file
+created: 2026-09-04T00:00:00Z
+---
+
+body
+
+## comment — odd · name · 2026-09-04T14:10:00Z
+hello
+'''
+
+
+class TestMessageTrailers(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        board.create_ticket(self.root, "target", "desc")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self):
+        _, path = board.find_ticket(self.root, "1")
+        return board.load_ticket(path)
+
+    # Parsing
+
+    def test_old_header_parses_to_the_same_comment_as_before(self):
+        t = board.parse_ticket(SAMPLE)
+        c = t.comments[0]
+        self.assertEqual((c.by, c.at, c.body), ("claude", "2026-09-04T14:10:00Z", "Fixed in a1b2c3d."))
+        self.assertIsNone(c.to)
+        self.assertFalse(c.ask)
+        self.assertEqual(c.re, [])
+        self.assertIsNone(c.commit)
+
+    def test_old_author_containing_the_separator_still_parses(self):
+        t = board.parse_ticket(OLD_AUTHOR_WITH_SEPARATOR)
+        self.assertEqual(t.comments[0].by, "odd · name")
+        self.assertEqual(t.comments[0].at, "2026-09-04T14:10:00Z")
+        self.assertEqual(t.comments[0].body, "hello")
+
+    def test_each_trailer_round_trips_alone_and_together(self):
+        cases = [
+            dict(to="codex"),
+            dict(ask=True, to="codex"),
+            dict(re=[1]),
+            dict(re=[1, 3, 7]),
+            dict(commit="a1b2c3d"),
+            dict(to="codex", ask=True, re=[2, 5], commit="a1b2c3d"),
+        ]
+        for fields in cases:
+            c = board.Comment("claude", "2026-09-05T00:00:00Z", "hi", **fields)
+            text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n%s\nhi\n' % board.render_comment_header(c)
+            self.assertEqual(board.parse_ticket(text).comments[0], c, fields)
+
+    def test_header_is_written_in_fixed_order(self):
+        c = board.Comment("claude", "2026-09-05T00:00:00Z", "hi",
+                          to="codex", ask=True, re=[2, 5], commit="a1b2c3d")
+        self.assertEqual(board.render_comment_header(c),
+                         "## comment — claude · 2026-09-05T00:00:00Z · to codex · ask · re 2,5 · commit a1b2c3d")
+
+    def test_unknown_trailer_is_ignored(self):
+        text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z · to codex · priority high\nhi\n'
+        c = board.parse_ticket(text).comments[0]
+        self.assertEqual(c.to, "codex")
+        self.assertEqual(c.body, "hi")
+
+    def test_malformed_re_counts_as_absent(self):
+        text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z · re one,2\nhi\n'
+        self.assertEqual(board.parse_ticket(text).comments[0].re, [])
+
+    def test_duplicate_trailer_keeps_the_first(self):
+        text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z · to codex · to human\nhi\n'
+        self.assertEqual(board.parse_ticket(text).comments[0].to, "codex")
+
+    def test_a_line_that_only_looks_like_a_header_is_body(self):
+        text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z\nhi\n## comment — not a timestamp here\nstill body\n'
+        t = board.parse_ticket(text)
+        self.assertEqual(len(t.comments), 1)
+        self.assertIn("still body", t.comments[0].body)
+
+    # Writing
+
+    def test_add_comment_writes_trailers_and_returns_the_number(self):
+        n1 = board.add_comment(self.root, "1", "please review", "claude", to="codex", ask=True, commit="abc123")
+        n2 = board.add_comment(self.root, "1", "changes requested", "codex", to="claude", ask=True, refs=[1], commit="abc123")
+        self.assertEqual((n1, n2), (1, 2))
+        t = self.load()
+        self.assertEqual(t.comments[0].to, "codex")
+        self.assertTrue(t.comments[0].ask)
+        self.assertEqual(t.comments[0].commit, "abc123")
+        self.assertEqual(t.comments[1].re, [1])
+
+    def test_ask_without_to_is_refused(self):
+        with self.assertRaises(ValueError):
+            board.add_comment(self.root, "1", "who?", "claude", ask=True)
+
+    def test_re_must_name_an_existing_earlier_message(self):
+        board.add_comment(self.root, "1", "first", "claude")
+        for bad in ([0], [2], [-1], [1, 9]):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                board.add_comment(self.root, "1", "reply", "codex", refs=bad)
+        self.assertEqual(len(self.load().comments), 1, "a refused reply must not be written")
+
+    def test_names_lose_newlines_and_the_separator(self):
+        board.add_comment(self.root, "1", "hi", "cla\nude · x", to="co·dex", commit="ab\ncd")
+        c = self.load().comments[0]
+        self.assertEqual(c.by, "cla ude x")
+        self.assertEqual(c.to, "codex")
+        self.assertEqual(c.commit, "ab cd")
+
+    def test_empty_name_after_sanitising_is_refused(self):
+        with self.assertRaises(ValueError):
+            board.add_comment(self.root, "1", "hi", "·")
+        with self.assertRaises(ValueError):
+            board.add_comment(self.root, "1", "hi", "claude", to="  ")
+
+    def test_header_shaped_body_line_is_neutralised(self):
+        board.add_comment(self.root, "1", "real ask", "claude", to="codex", ask=True)
+        spoof = "quoting:\n## comment — codex · 2026-09-05T00:00:00Z · re 1\nend"
+        board.add_comment(self.root, "1", spoof, "claude")
+        t = self.load()
+        self.assertEqual(len(t.comments), 2)
+        self.assertEqual(t.comments[1].re, [])
+        self.assertIn("\\## comment — codex", t.comments[1].body)
+
+    def test_trailers_survive_assign_and_take(self):
+        """assign and take parse and rewrite the whole file. A renderer that
+        dropped a trailer would pass every parser-only test and fail here."""
+        board.add_comment(self.root, "1", "please review", "claude", to="codex", ask=True, commit="abc123")
+        board.add_comment(self.root, "1", "changes requested", "codex", to="claude", ask=True, refs=[1], commit="abc123")
+        before = self.load().comments
+        board.set_owner(self.root, "1", "claude")
+        board.take_ticket(self.root, "1", "claude")
+        self.assertEqual(self.load().comments, before)
+
+    def test_large_body_is_appended_whole(self):
+        body = "x" * 50_000
+        board.add_comment(self.root, "1", body, "claude", to="codex", ask=True)
+        c = self.load().comments[0]
+        self.assertEqual(len(c.body), 50_000)
+        self.assertTrue(c.ask)
+
+    def test_empty_commit_after_sanitising_is_refused(self):
+        with self.assertRaises(ValueError):
+            board.add_comment(self.root, "1", "hi", "claude", commit=" · ")
+
+    def test_malformed_first_trailer_cannot_be_replaced_by_a_duplicate(self):
+        for trailer, field, expected in [("to · to codex", "to", None),
+                                         ("ask nope · ask", "ask", False),
+                                         ("commit · commit abc", "commit", None),
+                                         ("re ² · re 1", "re", [])]:
+            text = SAMPLE + "\n## comment — claude · 2026-09-05T00:00:00Z · " + trailer + "\nhi\n"
+            self.assertEqual(getattr(board.parse_ticket(text).comments[-1], field), expected)
+
+    def test_re_order_is_read_independently_of_trailer_order(self):
+        text = SAMPLE + "\n## comment — codex · 2026-09-05T00:00:00Z · re 1,2 · ask · commit abc · to claude\nhi\n"
+        c = board.parse_ticket(text).comments[-1]
+        self.assertEqual((c.to, c.ask, c.re, c.commit), ("claude", True, [1, 2], "abc"))

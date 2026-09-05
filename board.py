@@ -19,7 +19,12 @@ from urllib.parse import parse_qs, urlparse
 
 COLUMNS = ("todo", "doing", "review", "blocked", "done")
 FM_DELIM = "---"
-COMMENT_RE = re.compile(r"^## comment — (?P<by>.+?) · (?P<at>\S+)\s*$")
+# The timestamp is the anchor. The old pattern took any non-blank token as the
+# timestamp, which read an author of "alice · <ts> · to bob" and a timestamp of
+# "ask". Anchoring here means the author is everything before the timestamp and
+# the trailers are everything after, for old files and new alike.
+_TS = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
+COMMENT_RE = re.compile(r"^## comment — (?P<by>.+?) · (?P<at>" + _TS + r")(?P<trail>(?: · .*)?)\s*$")
 
 
 @dataclass
@@ -27,7 +32,10 @@ class Comment:
     by: str
     at: str
     body: str
-
+    to: str | None = None
+    ask: bool = False
+    re: list[int] = field(default_factory=list)
+    commit: str | None = None
 
 @dataclass
 class Ticket:
@@ -38,6 +46,55 @@ class Ticket:
     owner: str | None = None
     branch: str | None = None
     comments: list[Comment] = field(default_factory=list)
+
+
+def _parse_trailers(trail: str) -> tuple[str | None, bool, list[int], str | None]:
+    """Read ` · to x · ask · re 1,2 · commit abc`. Unknown keys are ignored so
+    a newer writer cannot make a file unreadable; a malformed known key counts
+    as absent, never as something else; a duplicate keeps its first value."""
+    to: str | None = None
+    ask = False
+    refs: list[int] = []
+    commit: str | None = None
+    seen: set[str] = set()
+    for part in trail.split(" · "):
+        part = part.strip()
+        if not part:
+            continue
+        key, _, value = part.partition(" ")
+        value = value.strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        if key == "to" and value:
+            to = value
+        elif key == "ask" and not value:
+            ask = True
+        elif key == "re":
+            nums: list[int] = []
+            for tok in value.split(","):
+                tok = tok.strip()
+                if not re.fullmatch(r"[0-9]{1,9}", tok) or int(tok) < 1:
+                    nums = []
+                    break
+                nums.append(int(tok))
+            refs = nums
+        elif key == "commit" and value:
+            commit = value
+    return to, ask, refs, commit
+
+
+def render_comment_header(c: Comment) -> str:
+    parts = ["## comment — %s · %s" % (c.by, c.at)]
+    if c.to:
+        parts.append("to %s" % c.to)
+    if c.ask:
+        parts.append("ask")
+    if c.re:
+        parts.append("re %s" % ",".join(str(n) for n in c.re))
+    if c.commit:
+        parts.append("commit %s" % c.commit)
+    return " · ".join(parts)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -70,23 +127,29 @@ def parse_ticket(text: str) -> Ticket:
             raise ValueError("ticket missing required field: %s" % required)
     desc: list[str] = []
     comments: list[Comment] = []
-    current = None
+    current: re.Match | None = None
     buf: list[str] = []
+
+    def flush() -> None:
+        to, ask, refs, commit = _parse_trailers(current.group("trail"))
+        comments.append(Comment(current.group("by"), current.group("at"),
+                                "\n".join(buf).strip(), to, ask, refs, commit))
+
     for line in body.split("\n"):
         match = COMMENT_RE.match(line)
         if match:
             if current is None:
                 desc = buf
             else:
-                comments.append(Comment(current[0], current[1], "\n".join(buf).strip()))
-            current = (match.group("by"), match.group("at"))
+                flush()
+            current = match
             buf = []
         else:
             buf.append(line)
     if current is None:
         desc = buf
     else:
-        comments.append(Comment(current[0], current[1], "\n".join(buf).strip()))
+        flush()
     return Ticket(
         id=meta["id"],
         title=meta["title"],
@@ -108,7 +171,7 @@ def render_ticket(t: Ticket) -> str:
     out.append(FM_DELIM)
     text = "\n".join(out) + "\n\n" + t.description.strip() + "\n"
     for c in t.comments:
-        text += "\n## comment — %s · %s\n%s\n" % (c.by, c.at, c.body.strip())
+        text += "\n%s\n%s\n" % (render_comment_header(c), c.body.strip())
     return text
 
 
@@ -141,6 +204,21 @@ def sanitize_scalar(value: str) -> str:
     """Frontmatter values must be single-line. Collapse control chars to spaces."""
     cleaned = "".join(" " if (ch == "\n" or ch == "\r" or ord(ch) < 32) else ch for ch in value)
     return " ".join(cleaned.split()).strip()
+
+
+def sanitize_name(value: str) -> str:
+    """A header scalar: one line, and never the separator, so a name cannot end
+    the header early or start a trailer of its own."""
+    return sanitize_scalar(value.replace("·", ""))
+
+
+def neutralise_body(body: str) -> str:
+    """A body line shaped like a header would parse as a new message and, with
+    `re`, could clear a real request. A leading backslash defeats the anchored
+    parser, survives the strip the parser and renderer apply to bodies, and
+    renders as literal text in markdown."""
+    return "\n".join("\\" + line if COMMENT_RE.match(line) else line
+                     for line in body.split("\n"))
 
 
 LOCK_NAME = ".lock"
@@ -447,20 +525,71 @@ def set_owner(root: str, tid: str, owner: str) -> None:
         atomic_write(path, render_ticket(ticket))
 
 
-def add_comment(root: str, tid: str, body: str, by: str) -> None:
-    """Append a comment.
+def _prepare_comment(body: str, by: str, to: str | None, ask: bool,
+                     refs: list[int] | None, commit: str | None) -> Comment:
+    """Everything about a new message that can be checked without the lock."""
+    by = sanitize_name(by)
+    if not by:
+        raise ValueError("--by must name who is writing")
+    if to is not None:
+        to = sanitize_name(to) or None
+        if to is None:
+            raise ValueError("--to must name a recipient")
+    if commit is not None:
+        commit = sanitize_name(commit) or None
+        if commit is None:
+            raise ValueError("--commit must contain a value")
+    if ask and not to:
+        raise ValueError("--ask needs --to: who should answer?")
+    refs = sorted(set(refs or []))
+    for n in refs:
+        if n < 1:
+            raise ValueError("--re %d: message numbers start at 1" % n)
+    return Comment(by=by, at=utc_now(), body=neutralise_body(body.strip()),
+                   to=to, ask=ask, re=refs, commit=commit)
 
-    O_APPEND makes the write itself atomic, but that is not enough on its own:
-    a writer holding the lock can read the ticket, this append can land, and the
-    writer's rewrite then erases it. A lock-free append can also recreate a
-    ticket at its old path after a concurrent move. Every mutation cooperates.
+
+def _append_comment_locked(path: str, comment: Comment) -> int:
+    """Append one message and return its number. Caller holds the board lock.
+
+    `re` is checked here, against the file as it is under the lock, so a
+    reference can only point at a message that already exists. The append is a
+    single write loop on an O_APPEND descriptor, not a buffered text write that
+    may land in pieces, so a reader that takes the lock never sees a header
+    without its body.
     """
+    existing = len(load_ticket(path).comments)
+    for n in comment.re:
+        if n > existing:
+            raise ValueError("--re %d: this file has %d message%s"
+                             % (n, existing, "" if existing == 1 else "s"))
+    data = ("\n%s\n%s\n" % (render_comment_header(comment), comment.body)).encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            if written == 0:
+                raise OSError("could not append the message")
+            view = view[written:]
+    finally:
+        os.close(fd)
+    return existing + 1
+
+
+def add_comment(root: str, tid: str, body: str, by: str, to: str | None = None,
+                ask: bool = False, refs: list[int] | None = None,
+                commit: str | None = None) -> int:
+    """Append a message to a ticket or thread and return its number.
+
+    Everything under the lock, as before: a writer holding the lock can read the
+    file, an unlocked append can land, and the writer's rewrite then erases it.
+    A lock-free append can also recreate a ticket at its old path after a move.
+    """
+    comment = _prepare_comment(body, by, to, ask, refs, commit)
     with board_lock(root):
         _, path = find_ticket(root, tid)
-        block = "\n## comment — %s · %s\n%s\n" % (by, utc_now(), body.strip())
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(block)
-
+        return _append_comment_locked(path, comment)
 
 def column_snapshot(root: str, column: str) -> dict[str, float]:
     column = validate_column(column)

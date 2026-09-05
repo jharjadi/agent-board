@@ -154,11 +154,12 @@ none of them can end the header early or start a trailer. Today `by` is written
 raw; this fixes that in passing.
 
 **Body lines that look like a header are neutralised on write.** Any body line
-matching the header pattern gets one leading space, which markdown still renders
-and the anchored parser no longer matches. Until now a spoofed header only
-mis-rendered a comment; with `re` it could clear a real request, so this is in
-scope. Existing files are not rewritten; ticket 001 on this repo's board tracks the
-residue.
+matching the header pattern gets one leading backslash, which markdown renders
+as literal text, the anchored parser no longer matches, and the `strip()` that
+the parser and renderer apply to bodies leaves in place. Until now a spoofed
+header only mis-rendered a comment; with `re` it could clear a real request, so
+this is in scope. Existing files are not rewritten; ticket 001 on this repo's
+board tracks the residue.
 
 A reply may itself be an ask. That is the whole review vocabulary:
 
