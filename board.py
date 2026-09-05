@@ -312,15 +312,21 @@ def next_id(root: str) -> str:
     return str(highest + 1).zfill(3)
 
 
-def create_ticket(root: str, title: str, description: str = "",
-                  column: str = "todo", owner: str | None = None) -> str:
-    column = validate_column(column)
+def _create_locked(root: str, title: str, description: str, dest_dir: str,
+                   owner: str | None = None) -> tuple[str, str]:
+    """Allocate an id and write a new file into dest_dir. Caller holds the board lock.
+
+    The scan in next_id and the O_EXCL reservation must sit in one critical
+    section. Reservation alone only guards the window between reserve and
+    rename; a creator that scanned before another's rename can still reserve
+    the same number afterwards. That happened in review, with a simulation.
+    """
     title = sanitize_scalar(title)
-    owner = sanitize_scalar(owner) if owner else owner
+    owner = sanitize_scalar(owner) if owner else None
     for _ in range(MAX_ID_ATTEMPTS):
         tid = next_id(root)
-        # Reserve at the board ROOT, not inside a column: exclusivity must be
-        # on the id alone, or two concurrent creates into different columns
+        # Reserve at the board ROOT, not inside the destination: exclusivity
+        # must be on the id alone, or two creates into different directories
         # can both win the same id.
         reservation_path = os.path.join(root, "%s.md" % tid)
         try:
@@ -332,16 +338,23 @@ def create_ticket(root: str, title: str, description: str = "",
                             description=description, owner=owner)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(render_ticket(ticket))
-            final_path = os.path.join(root, column, "%s-%s.md" % (tid, slugify(title)))
+            final_path = os.path.join(root, dest_dir, "%s-%s.md" % (tid, slugify(title)))
             os.makedirs(os.path.dirname(final_path), exist_ok=True)
             os.rename(reservation_path, final_path)
-            return tid
+            return tid, final_path
         except BaseException:
             if os.path.exists(reservation_path):
                 os.unlink(reservation_path)
             raise
-    raise RuntimeError("could not allocate a ticket id after %d attempts" % MAX_ID_ATTEMPTS)
+    raise RuntimeError("could not allocate an id after %d attempts" % MAX_ID_ATTEMPTS)
 
+
+def create_ticket(root: str, title: str, description: str = "",
+                  column: str = "todo", owner: str | None = None) -> str:
+    column = validate_column(column)
+    with board_lock(root):
+        tid, _ = _create_locked(root, title, description, column, owner)
+    return tid
 
 def load_ticket(path: str) -> Ticket:
     with open(path, encoding="utf-8") as fh:
@@ -349,14 +362,21 @@ def load_ticket(path: str) -> Ticket:
 
 
 def find_ticket(root: str, tid: str) -> tuple[str, str]:
+    """Locate a ticket by id. Exactly one file may carry an id; two is an error,
+    not a coin toss, because every mutation would otherwise act on whichever
+    sorted first and leave the other as a silent twin."""
     tid = validate_id(tid)
+    found: list[tuple[str, str]] = []
     for col in COLUMNS:
         for pattern in ("%s-*.md" % tid, "%s.md" % tid):
-            matches = sorted(glob.glob(os.path.join(root, col, pattern)))
-            if matches:
-                return col, matches[0]
-    raise KeyError("no ticket with id %s" % tid)
-
+            for path in sorted(glob.glob(os.path.join(root, col, pattern))):
+                found.append((col, path))
+    if not found:
+        raise KeyError("no ticket with id %s" % tid)
+    if len(found) > 1:
+        raise ValueError("id %s matches %d files: %s"
+                         % (tid, len(found), ", ".join(p for _, p in found)))
+    return found[0]
 
 def list_tickets(root: str, column: str | None = None) -> list[tuple[str, Ticket]]:
     cols = (validate_column(column),) if column else COLUMNS

@@ -7,7 +7,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import board
@@ -960,3 +962,53 @@ class TestBoardRootOverride(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAllocatorLock(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_scan_and_reserve_happen_under_the_lock(self):
+        """Two creators that both scan before either reserves must still get
+        different ids. Without the lock the first sleeps after scanning, the
+        second scans the same number, reserves and renames away, and the first
+        then reserves the now-absent root file: both win the same id."""
+        real_next_id = board.next_id
+        first = threading.Event()
+
+        def slow_next_id(root):
+            tid = real_next_id(root)
+            if not first.is_set():
+                first.set()
+                time.sleep(0.3)
+            return tid
+
+        ids = []
+        with mock.patch.object(board, "next_id", slow_next_id):
+            workers = [
+                threading.Thread(target=lambda i=i: ids.append(board.create_ticket(self.root, "t%d" % i)))
+                for i in range(2)
+            ]
+            for w in workers:
+                w.start()
+            for w in workers:
+                w.join()
+        self.assertEqual(sorted(ids), ["001", "002"], ids)
+
+    def test_find_ticket_refuses_an_ambiguous_id(self):
+        for col in ("todo", "done"):
+            t = board.Ticket(id="005", title="dup", created=board.utc_now())
+            board.atomic_write(os.path.join(self.root, col, "005-dup.md"), board.render_ticket(t))
+        with self.assertRaises(ValueError):
+            board.find_ticket(self.root, "5")
+
+    def test_find_ticket_still_finds_a_unique_bare_file(self):
+        t = board.Ticket(id="007", title="bare", created=board.utc_now())
+        board.atomic_write(os.path.join(self.root, "doing", "007.md"), board.render_ticket(t))
+        col, path = board.find_ticket(self.root, "7")
+        self.assertEqual(col, "doing")
+        self.assertTrue(path.endswith("007.md"))
