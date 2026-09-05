@@ -12,7 +12,7 @@ import re
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -656,6 +656,123 @@ def watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str
     changed = sorted((tid for tid, mtime in current.items() if seen.get(tid) != mtime), key=int)
     return changed, current
 
+def pending_asks(t: Ticket, name: str | None = None) -> list[tuple[int, Comment]]:
+    """The inbox rule, stated once: a message is pending when it carries `ask`,
+    its `to` matches `name` (any case), and no later message in the same file
+    lists it in `re`. Who spoke last is never consulted; the bridge's tool
+    guessed from that and was patched twice after hiding a real request.
+    A `re` naming a message at or after itself has no effect."""
+    answered: set[int] = set()
+    for i, c in enumerate(t.comments, start=1):
+        answered.update(n for n in c.re if 1 <= n < i)
+    want = name.lower() if name is not None else None
+    rows = []
+    for i, c in enumerate(t.comments, start=1):
+        if not c.ask or not c.to or i in answered:
+            continue
+        if want is not None and c.to.lower() != want:
+            continue
+        rows.append((i, c))
+    return rows
+
+
+def answered_unseen(t: Ticket, name: str) -> list[tuple[int, Comment, int, Comment]]:
+    """The inbox's second question: what came back to me. An ask `name` posted
+    that a later message answers with `re`, where `name` has posted nothing in
+    the file after that answer. Posting anything afterwards is the
+    acknowledgement. Returns (ask_n, ask, answer_n, answer), latest answer."""
+    me = name.lower()
+    last_mine = max((i for i, c in enumerate(t.comments, start=1) if c.by.lower() == me),
+                    default=0)
+    rows = []
+    for i, c in enumerate(t.comments, start=1):
+        if not c.ask or c.by.lower() != me:
+            continue
+        answers = [(j, d) for j, d in enumerate(t.comments, start=1) if j > i and i in d.re]
+        if answers and last_mine < answers[-1][0]:
+            rows.append((i, c, answers[-1][0], answers[-1][1]))
+    return rows
+
+
+def _all_items(root: str) -> list[tuple[str, Ticket]]:
+    """Every ticket and every thread. No lock here: callers that compute
+    pending take the board lock once around this call."""
+    items = list_tickets(root)
+    items.extend((THREADS_DIR, t) for t in list_threads(root))
+    return items
+
+
+def _first_line(body: str) -> str:
+    for line in body.split("\n"):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def inbox_rows(root: str, name: str | None = None) -> list[dict]:
+    """Pending asks across the whole board, newest first. With no name, every
+    pending ask with its recipient: the human's view."""
+    with board_lock(root):
+        items = _all_items(root)
+    def row(col, t, n, c, state, asked):
+        return {
+            "id": t.id,
+            "kind": "thread" if is_thread(col) else "ticket",
+            "column": col,
+            "title": t.title,
+            "n": n,
+            "by": c.by,
+            "to": c.to,
+            "at": c.at,
+            "commit": c.commit,
+            "summary": _first_line(c.body),
+            "state": state,
+            "asked": asked,
+        }
+
+    rows = []
+    for col, t in items:
+        for n, c in pending_asks(t, name):
+            rows.append(row(col, t, n, c, "awaiting", None))
+        if name is not None:
+            for ask_n, _, n, c in answered_unseen(t, name):
+                rows.append(row(col, t, n, c, "answered", ask_n))
+    rows.sort(key=lambda r: (r["state"] == "awaiting", r["at"], int(r["id"]), r["n"]), reverse=True)
+    return rows
+
+
+def _print_inbox(rows: list[dict]) -> None:
+    if not rows:
+        print("(nothing pending)")
+        return
+    for state, heading in (("awaiting", "AWAITING YOUR REPLY"),
+                           ("answered", "ANSWERED, NOT YET SEEN BY YOU")):
+        section = [r for r in rows if r["state"] == state]
+        if not section:
+            continue
+        print("%s (%d)" % (heading, len(section)))
+        for r in section:
+            commit = "  %s" % r["commit"] if r["commit"] else ""
+            asked = "  (your #%d)" % r["asked"] if r["asked"] else ""
+            print("  %s  %-6s #%-3d %s to %s  %s%s%s\n        %s"
+                  % (r["id"], r["kind"], r["n"], r["by"], r["to"],
+                     r["at"].replace("T", " ").rstrip("Z"), commit, asked, r["summary"][:110]))
+        print()
+
+
+def _print_threads(rows: list[Ticket]) -> None:
+    if not rows:
+        print("(no threads)")
+        return
+    for t in rows:
+        pend = len(pending_asks(t))
+        last = t.comments[-1] if t.comments else None
+        when = ("%s %s" % (last.at.replace("T", " ").rstrip("Z"), last.by)) if last else t.created
+        print("%s  %-44.44s %3d msg%s  %-10s %s"
+              % (t.id, t.title, len(t.comments), " " if len(t.comments) == 1 else "s",
+                 ("%d pending" % pend) if pend else "-", when))
+
+
 def _print_rows(rows) -> None:
     if not rows:
         print("(empty)")
@@ -893,6 +1010,34 @@ def serve(root: str, port: int = 8899) -> None:
     server.serve_forever()
 
 
+def _body_from_args(body: str | None, body_file: str | None) -> str:
+    """The body comes from the argument or from a file; `-` means stdin. Bodies
+    in the record are multi-kilobyte essays, and shell quoting is not the place
+    for them."""
+    if body_file:
+        if body is not None:
+            raise ValueError("give the body as an argument or with --body-file, not both")
+        if body_file == "-":
+            return sys.stdin.read()
+        with open(body_file, encoding="utf-8") as fh:
+            return fh.read()
+    if body is None:
+        raise ValueError("a body is required: pass it as an argument or with --body-file PATH (- for stdin)")
+    return body
+
+
+def _parse_refs(value: str | None) -> list[int]:
+    if not value:
+        return []
+    refs = []
+    for tok in value.split(","):
+        tok = tok.strip()
+        if not re.fullmatch(r"[0-9]{1,9}", tok):
+            raise ValueError("--re expects message numbers like 3 or 1,2,3, not %r" % tok)
+        refs.append(int(tok))
+    return refs
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="board",
                                      description="file-backed kanban for coding agents")
@@ -912,10 +1057,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("column", nargs="?", default=None)
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("show")
-    p.add_argument("id")
-    p.add_argument("--json", action="store_true")
-
     p = sub.add_parser("take")
     p.add_argument("id")
     p.add_argument("--owner", required=True)
@@ -931,10 +1072,39 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("id")
     p.add_argument("owner", help="name or role; pass '' to clear the hint")
 
-    p = sub.add_parser("comment")
+    p = sub.add_parser("show")
     p.add_argument("id")
-    p.add_argument("body")
+    p.add_argument("--last", type=int, default=None, metavar="N",
+                   help="only the last N messages, numbered as in the file")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("comment", help="post a message on a ticket or thread")
+    p.add_argument("id")
+    p.add_argument("body", nargs="?", default=None)
     p.add_argument("--by", required=True)
+    p.add_argument("--to", default=None, help="who this is addressed to")
+    p.add_argument("--ask", action="store_true", help="a reply is expected (needs --to)")
+    p.add_argument("--re", default=None, metavar="N[,N...]",
+                   help="message numbers this answers")
+    p.add_argument("--commit", default=None, help="the commit this is about; carried, never checked")
+    p.add_argument("--body-file", default=None, metavar="PATH", help="read the body from PATH, or - for stdin")
+
+    p = sub.add_parser("thread", help="start a conversation that is not a ticket")
+    p.add_argument("title")
+    p.add_argument("body", nargs="?", default=None)
+    p.add_argument("--by", required=True)
+    p.add_argument("--to", default=None)
+    p.add_argument("--ask", action="store_true")
+    p.add_argument("--commit", default=None)
+    p.add_argument("--ticket", default=None, metavar="ID", help="the ticket this thread is about, if any")
+    p.add_argument("--body-file", default=None, metavar="PATH")
+
+    p = sub.add_parser("threads", help="list conversations, newest activity first")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("inbox", help="what is waiting on NAME; every pending ask with no NAME")
+    p.add_argument("name", nargs="?", default=None)
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("watch")
     p.add_argument("column")
@@ -967,14 +1137,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps([ticket_to_dict(c, t) for c, t in rows], indent=2))
             else:
                 _print_rows(rows)
-        elif args.cmd == "show":
-            col, path = find_ticket(root, args.id)
-            ticket = load_ticket(path)
-            if args.json:
-                print(json.dumps(ticket_to_dict(col, ticket), indent=2))
-            else:
-                print("[%s] %s" % (col, path))
-                print(render_ticket(ticket))
         elif args.cmd == "take":
             take_ticket(root, args.id, args.owner, expect=args.expect)
             print("%s -> doing (@%s)" % (validate_id(args.id), args.owner))
@@ -984,9 +1146,51 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "assign":
             set_owner(root, args.id, args.owner)
             print("%s owner -> %s" % (validate_id(args.id), args.owner or "(cleared)"))
+        elif args.cmd == "show":
+            with board_lock(root):
+                col, path = find_ticket(root, args.id)
+                ticket = load_ticket(path)
+            if args.last is not None and args.last < 0:
+                raise ValueError("--last must be zero or greater")
+            total = len(ticket.comments)
+            start = max(0, total - args.last) if args.last is not None else 0
+            if args.json:
+                data = ticket_to_dict(col, ticket)
+                data["comments"] = data["comments"][start:]
+                print(json.dumps(data, indent=2))
+            else:
+                print("[%s] %s" % (col, path))
+                print(render_ticket(replace(ticket, comments=[])).rstrip("\n"))
+                if start:
+                    showing = ("showing %d-%d of %d" % (start + 1, total, total)
+                               if start < total else "showing no messages")
+                    print("\n(%d earlier message%s omitted; %s)"
+                          % (start, "" if start == 1 else "s", showing))
+                for n, c in enumerate(ticket.comments[start:], start=start + 1):
+                    print("\n[#%d]\n%s\n%s" % (n, render_comment_header(c), c.body))
         elif args.cmd == "comment":
-            add_comment(root, args.id, args.body, args.by)
-            print("comment added to %s" % validate_id(args.id))
+            body = _body_from_args(args.body, args.body_file)
+            n = add_comment(root, args.id, body, args.by, to=args.to, ask=args.ask,
+                            refs=_parse_refs(args.re), commit=args.commit)
+            print("message %d added to %s" % (n, validate_id(args.id)))
+        elif args.cmd == "thread":
+            body = _body_from_args(args.body, args.body_file)
+            print(create_thread(root, args.title, body, args.by, to=args.to, ask=args.ask,
+                                commit=args.commit, ticket=args.ticket))
+        elif args.cmd == "threads":
+            with board_lock(root):
+                rows = list_threads(root)
+            if args.json:
+                print(json.dumps([ticket_to_dict(THREADS_DIR, t) | {"pending": len(pending_asks(t))}
+                                  for t in rows], indent=2))
+            else:
+                _print_threads(rows)
+        elif args.cmd == "inbox":
+            rows = inbox_rows(root, args.name)
+            if args.json:
+                print(json.dumps(rows, indent=2))
+            else:
+                _print_inbox(rows)
         elif args.cmd == "watch":
             _, seen = watch_once(root, args.column, {})
             print("watching %s/%s" % (BOARD_DIR, args.column), flush=True)

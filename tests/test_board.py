@@ -1308,3 +1308,241 @@ class TestThreads(unittest.TestCase):
             return real_rename(src, dest)
         with mock.patch.object(board.os, "rename", inspect_rename):
             board.create_thread(self.root, "atomic opening", "opening", "codex")
+
+
+class TestPending(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        self.tid = board.create_thread(self.root, "t", "opening", "claude")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def thread(self):
+        _, path = board.find_ticket(self.root, self.tid)
+        return board.load_ticket(path)
+
+    def numbers(self, name=None):
+        return [n for n, _ in board.pending_asks(self.thread(), name)]
+
+    def test_unanswered_ask_is_pending_for_its_recipient_only(self):
+        board.add_comment(self.root, self.tid, "q", "claude", to="codex", ask=True)
+        self.assertEqual(self.numbers("codex"), [2])
+        self.assertEqual(self.numbers("claude"), [])
+        self.assertEqual(self.numbers(), [2])
+
+    def test_a_message_without_ask_is_never_pending(self):
+        board.add_comment(self.root, self.tid, "fyi", "claude", to="codex")
+        self.assertEqual(self.numbers(), [])
+
+    def test_reply_by_re_clears_it(self):
+        board.add_comment(self.root, self.tid, "q", "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "a", "codex", to="claude", refs=[2])
+        self.assertEqual(self.numbers(), [])
+
+    def test_reply_that_asks_again_is_pending_for_the_other_party(self):
+        board.add_comment(self.root, self.tid, "review please", "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "changes requested", "codex", to="claude", ask=True, refs=[2])
+        self.assertEqual(self.numbers("codex"), [])
+        self.assertEqual(self.numbers("claude"), [3])
+
+    def test_re_list_clears_several_at_once(self):
+        for i in range(3):
+            board.add_comment(self.root, self.tid, "task %d" % i, "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "whole branch supersedes", "claude", to="codex", ask=True, refs=[2, 3, 4])
+        self.assertEqual(self.numbers("codex"), [5])
+
+    def test_askers_own_re_clears_it(self):
+        board.add_comment(self.root, self.tid, "q", "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "never mind", "claude", refs=[2])
+        self.assertEqual(self.numbers(), [])
+
+    def test_name_matching_ignores_case(self):
+        board.add_comment(self.root, self.tid, "q", "claude", to="Codex", ask=True)
+        self.assertEqual(self.numbers("codex"), [2])
+        self.assertEqual(self.numbers("CODEX"), [2])
+
+    def test_dangling_or_forward_re_changes_nothing(self):
+        board.add_comment(self.root, self.tid, "q", "claude", to="codex", ask=True)
+        _, path = board.find_ticket(self.root, self.tid)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n## comment — codex · 2026-09-05T00:00:00Z · re 9\nlate\n")
+            fh.write("\n## comment — codex · 2026-09-05T00:00:01Z · re 4\nself\n")
+        self.assertEqual(self.numbers("codex"), [2])
+
+    def test_pending_survives_take_on_a_ticket(self):
+        tid = board.create_ticket(self.root, "work")
+        board.add_comment(self.root, tid, "review?", "claude", to="codex", ask=True)
+        board.take_ticket(self.root, tid, "codex")
+        _, path = board.find_ticket(self.root, tid)
+        self.assertEqual([n for n, _ in board.pending_asks(board.load_ticket(path), "codex")], [1])
+
+    def test_inbox_rows_span_tickets_and_threads_newest_first(self):
+        tid = board.create_ticket(self.root, "work")
+        board.add_comment(self.root, tid, "on the ticket", "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "in the thread\nmore", "claude", to="codex", ask=True, commit="abc")
+        rows = board.inbox_rows(self.root, "codex")
+        self.assertEqual({r["kind"] for r in rows}, {"ticket", "thread"})
+        thread_row = next(r for r in rows if r["kind"] == "thread")
+        self.assertEqual(thread_row["summary"], "in the thread")
+        self.assertEqual(thread_row["commit"], "abc")
+        self.assertEqual(thread_row["n"], 2)
+        self.assertEqual(board.inbox_rows(self.root, "nobody"), [])
+        self.assertEqual(len(board.inbox_rows(self.root)), 2)
+        for r in rows:
+            self.assertEqual(set(r), {"id", "kind", "column", "title", "n", "by", "to", "at",
+                                      "commit", "summary", "state", "asked"})
+            self.assertEqual(r["state"], "awaiting")
+
+    def test_answered_ask_is_unseen_until_the_asker_posts_again(self):
+        """An approval is a reply with no ask. Without this the engineer who asked
+        for review sees an empty inbox and cannot tell acceptance from silence."""
+        board.add_comment(self.root, self.tid, "review?", "claude", to="codex", ask=True)
+        self.assertEqual(board.answered_unseen(self.thread(), "claude"), [])
+        board.add_comment(self.root, self.tid, "approved", "codex", to="claude", refs=[2])
+        rows = board.answered_unseen(self.thread(), "claude")
+        self.assertEqual([(a, n) for a, _, n, _ in rows], [(2, 3)])
+        self.assertEqual(board.answered_unseen(self.thread(), "codex"), [])
+        board.add_comment(self.root, self.tid, "thanks", "claude")
+        self.assertEqual(board.answered_unseen(self.thread(), "claude"), [])
+
+    def test_inbox_rows_carry_answered_rows_only_for_a_name(self):
+        board.add_comment(self.root, self.tid, "review?", "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "approved\ndetails", "codex", to="claude", refs=[2])
+        mine = board.inbox_rows(self.root, "claude")
+        self.assertEqual([r["state"] for r in mine], ["answered"])
+        self.assertEqual((mine[0]["asked"], mine[0]["n"], mine[0]["by"], mine[0]["summary"]),
+                         (2, 3, "codex", "approved"))
+        self.assertEqual(board.inbox_rows(self.root, "codex"), [])
+        self.assertEqual(board.inbox_rows(self.root), [])
+
+
+class TestConversationCLI(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+        self.run_cli("init", "--no-agents")
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        self.tmp.cleanup()
+
+    def run_cli(self, *args, stdin=None):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            if stdin is None:
+                code = board.main(list(args))
+            else:
+                with mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+                    code = board.main(list(args))
+        return code, out.getvalue()
+
+    def test_thread_then_inbox_then_reply(self):
+        code, out = self.run_cli("thread", "Design", "Attack the filter first", "--by", "claude", "--to", "codex", "--ask", "--commit", "abc")
+        self.assertEqual(code, 0)
+        tid = out.strip()
+        self.assertEqual(tid, "001")
+        code, out = self.run_cli("inbox", "codex")
+        self.assertEqual(code, 0)
+        self.assertIn("001", out)
+        self.assertIn("Attack the filter first", out)
+        self.assertIn("abc", out)
+        code, out = self.run_cli("comment", tid, "Approved", "--by", "codex", "--to", "claude", "--re", "1")
+        self.assertEqual(code, 0)
+        self.assertIn("2", out)
+        _, out = self.run_cli("inbox", "codex")
+        self.assertIn("nothing pending", out)
+        _, out = self.run_cli("inbox", "claude")
+        self.assertIn("ANSWERED", out)
+        self.assertIn("Approved", out)
+        _, out = self.run_cli("inbox", "--json")
+        self.assertEqual(json.loads(out), [])
+
+    def test_inbox_without_a_name_is_the_human_view(self):
+        self.run_cli("thread", "A", "q1", "--by", "claude", "--to", "codex", "--ask")
+        self.run_cli("new", "work")
+        self.run_cli("comment", "2", "q2", "--by", "codex", "--to", "human", "--ask")
+        _, out = self.run_cli("inbox", "--json")
+        rows = json.loads(out)
+        self.assertEqual(sorted(r["to"] for r in rows), ["codex", "human"])
+
+    def test_threads_lists_with_pending_count(self):
+        self.run_cli("thread", "Quiet", "hi", "--by", "claude")
+        self.run_cli("thread", "Loud", "q", "--by", "claude", "--to", "codex", "--ask")
+        code, out = self.run_cli("threads")
+        self.assertEqual(code, 0)
+        self.assertIn("Loud", out)
+        self.assertIn("1 pending", out)
+        _, out = self.run_cli("threads", "--json")
+        rows = json.loads(out)
+        self.assertEqual([r["title"] for r in rows][:1], ["Loud"])
+        self.assertEqual({r["pending"] for r in rows}, {0, 1})
+
+    def test_show_last_keeps_numbers(self):
+        self.run_cli("thread", "T", "one", "--by", "claude")
+        for body in ("two", "three", "four"):
+            self.run_cli("comment", "1", body, "--by", "codex")
+        code, out = self.run_cli("show", "1", "--last", "2")
+        self.assertEqual(code, 0)
+        self.assertIn("2 earlier messages omitted", out)
+        self.assertIn("showing 3-4 of 4", out)
+        self.assertNotIn("\ntwo\n", out)
+        self.assertIn("four", out)
+        _, out = self.run_cli("show", "1", "--last", "2", "--json")
+        self.assertEqual([c["n"] for c in json.loads(out)["comments"]], [3, 4])
+
+    def test_body_from_file_and_stdin(self):
+        with open("body.md", "w", encoding="utf-8") as fh:
+            fh.write("Summary line\n\nLong essay.\n")
+        code, _ = self.run_cli("thread", "T", "--by", "claude", "--body-file", "body.md")
+        self.assertEqual(code, 0)
+        code, _ = self.run_cli("comment", "1", "--by", "codex", "--body-file", "-", stdin="from stdin\n")
+        self.assertEqual(code, 0)
+        _, out = self.run_cli("show", "1", "--json")
+        bodies = [c["body"] for c in json.loads(out)["comments"]]
+        self.assertEqual(bodies, ["Summary line\n\nLong essay.", "from stdin"])
+
+    def test_missing_body_and_both_bodies_fail_cleanly(self):
+        code, _ = self.run_cli("thread", "T", "--by", "claude")
+        self.assertEqual(code, 2)
+        with open("b.md", "w") as fh:
+            fh.write("x")
+        code, _ = self.run_cli("thread", "T", "inline", "--by", "claude", "--body-file", "b.md")
+        self.assertEqual(code, 2)
+
+    def test_bad_re_and_ask_without_to_exit_two(self):
+        self.run_cli("thread", "T", "one", "--by", "claude")
+        code, _ = self.run_cli("comment", "1", "x", "--by", "codex", "--re", "one")
+        self.assertEqual(code, 2)
+        code, _ = self.run_cli("comment", "1", "x", "--by", "codex", "--re", "0")
+        self.assertEqual(code, 2)
+        code, _ = self.run_cli("comment", "1", "x", "--by", "codex", "--ask")
+        self.assertEqual(code, 2)
+
+    def test_move_of_a_thread_exits_two_with_a_plain_message(self):
+        self.run_cli("thread", "T", "one", "--by", "claude")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _ = self.run_cli("move", "1", "review")
+        self.assertEqual(code, 2)
+        self.assertIn("thread", err.getvalue())
+
+    def test_show_text_labels_each_original_message_number(self):
+        self.run_cli("thread", "T", "one", "--by", "codex")
+        self.run_cli("comment", "1", "two", "--by", "human")
+        _, out = self.run_cli("show", "1", "--last", "1")
+        self.assertIn("[#2]", out)
+        self.assertNotIn("[#1]", out)
+        _, out = self.run_cli("show", "1")
+        self.assertIn("[#1]", out)
+        self.assertIn("[#2]", out)
+
+    def test_show_last_zero_and_negative_are_unambiguous(self):
+        self.run_cli("thread", "T", "one", "--by", "codex")
+        _, out = self.run_cli("show", "1", "--last", "0")
+        self.assertIn("showing no messages", out)
+        self.assertNotIn("showing 2-1", out)
+        code, _ = self.run_cli("show", "1", "--last", "-1")
+        self.assertEqual(code, 2)
