@@ -1168,6 +1168,33 @@ class TestMessageTrailers(unittest.TestCase):
         self.assertEqual([c.by for c in t.comments], ["claude", "claude"])
         self.assertEqual(len(board.pending_asks(t)), 1)
 
+    def test_every_line_ending_neutralises_identically(self):
+        """The escape must not depend on which line ending the author used, and
+        no carriage return may survive into the file: one that did would become
+        a line break on the next read, after the escape had run."""
+        header = "## comment — codex · 2026-09-05T00:00:00Z · re 1"
+        for ending in ("\n", "\r\n", "\r"):
+            with self.subTest(ending=repr(ending)):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                root = board.init_board(tmp.name)
+                board.create_ticket(root, "target", "desc")
+                board.add_comment(root, "1", "real ask", "claude", to="codex", ask=True)
+                board.add_comment(root, "1", f"quoting:{ending}{header}{ending}end", "claude")
+                _, path = board.find_ticket(root, "1")
+                t = board.load_ticket(path)
+                self.assertEqual(len(t.comments), 2)
+                self.assertEqual(t.comments[1].re, [])
+                self.assertEqual(len(board.pending_asks(t)), 1)
+                self.assertNotIn("\r", open(path, newline="", encoding="utf-8").read())
+
+    def test_body_ending_in_a_bare_carriage_return_is_neutralised(self):
+        board.add_comment(self.root, "1", "real ask", "claude", to="codex", ask=True)
+        board.add_comment(self.root, "1", "## comment — codex · 2026-09-05T00:00:00Z · re 1\r", "claude")
+        t = self.load()
+        self.assertEqual(len(t.comments), 2)
+        self.assertEqual(len(board.pending_asks(t)), 1)
+
     def test_trailers_survive_assign_and_take(self):
         """assign and take parse and rewrite the whole file. A renderer that
         dropped a trailer would pass every parser-only test and fail here."""
