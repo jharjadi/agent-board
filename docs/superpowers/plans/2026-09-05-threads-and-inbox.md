@@ -957,7 +957,8 @@ The inbox rule as one function, the inbox query over tickets and threads, `show 
   - `pending_asks(t: Ticket, name: str | None = None) -> list[tuple[int, Comment]]`
   - `_all_items(root) -> list[tuple[str, Ticket]]` — tickets in all columns then threads. No lock; callers take it.
   - `_first_line(body: str) -> str`
-  - `inbox_rows(root, name: str | None = None) -> list[dict]` — takes the lock. Row keys: `id, kind, column, title, n, by, to, at, commit, summary`.
+  - `answered_unseen(t: Ticket, name: str) -> list[tuple[int, Comment, int, Comment]]` — `(ask_n, ask, answer_n, answer)` for each ask `name` posted that a later message answers with `re`, where `name` has posted nothing in the file after that answer.
+  - `inbox_rows(root, name: str | None = None) -> list[dict]` — takes the lock. Row keys: `id, kind, column, title, n, by, to, at, commit, summary, state, asked`. `state` is `"awaiting"` or `"answered"`; `asked` is the asker's message number on answered rows and `None` otherwise. Answered rows appear only when a name is given.
   - CLI: `thread`, `threads`, `inbox`, `comment` flags, `show --last`, `--body-file`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1046,7 +1047,31 @@ class TestPending(unittest.TestCase):
         self.assertEqual(board.inbox_rows(self.root, "nobody"), [])
         self.assertEqual(len(board.inbox_rows(self.root)), 2)
         for r in rows:
-            self.assertEqual(set(r), {"id", "kind", "column", "title", "n", "by", "to", "at", "commit", "summary"})
+            self.assertEqual(set(r), {"id", "kind", "column", "title", "n", "by", "to", "at",
+                                      "commit", "summary", "state", "asked"})
+            self.assertEqual(r["state"], "awaiting")
+
+    def test_answered_ask_is_unseen_until_the_asker_posts_again(self):
+        """An approval is a reply with no ask. Without this the engineer who asked
+        for review sees an empty inbox and cannot tell acceptance from silence."""
+        board.add_comment(self.root, self.tid, "review?", "claude", to="codex", ask=True)
+        self.assertEqual(board.answered_unseen(self.thread(), "claude"), [])
+        board.add_comment(self.root, self.tid, "approved", "codex", to="claude", refs=[2])
+        rows = board.answered_unseen(self.thread(), "claude")
+        self.assertEqual([(a, n) for a, _, n, _ in rows], [(2, 3)])
+        self.assertEqual(board.answered_unseen(self.thread(), "codex"), [])
+        board.add_comment(self.root, self.tid, "thanks", "claude")
+        self.assertEqual(board.answered_unseen(self.thread(), "claude"), [])
+
+    def test_inbox_rows_carry_answered_rows_only_for_a_name(self):
+        board.add_comment(self.root, self.tid, "review?", "claude", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "approved\ndetails", "codex", to="claude", refs=[2])
+        mine = board.inbox_rows(self.root, "claude")
+        self.assertEqual([r["state"] for r in mine], ["answered"])
+        self.assertEqual((mine[0]["asked"], mine[0]["n"], mine[0]["by"], mine[0]["summary"]),
+                         (2, 3, "codex", "approved"))
+        self.assertEqual(board.inbox_rows(self.root, "codex"), [])
+        self.assertEqual(board.inbox_rows(self.root), [])
 
 
 class TestConversationCLI(unittest.TestCase):
@@ -1085,6 +1110,9 @@ class TestConversationCLI(unittest.TestCase):
         self.assertIn("2", out)
         _, out = self.run_cli("inbox", "codex")
         self.assertIn("nothing pending", out)
+        _, out = self.run_cli("inbox", "claude")
+        self.assertIn("ANSWERED", out)
+        self.assertIn("Approved", out)
         _, out = self.run_cli("inbox", "--json")
         self.assertEqual(json.loads(out), [])
 
@@ -1188,6 +1216,24 @@ def pending_asks(t: Ticket, name: str | None = None) -> list[tuple[int, Comment]
     return rows
 
 
+def answered_unseen(t: Ticket, name: str) -> list[tuple[int, Comment, int, Comment]]:
+    """The inbox's second question: what came back to me. An ask `name` posted
+    that a later message answers with `re`, where `name` has posted nothing in
+    the file after that answer. Posting anything afterwards is the
+    acknowledgement. Returns (ask_n, ask, answer_n, answer), latest answer."""
+    me = name.lower()
+    last_mine = max((i for i, c in enumerate(t.comments, start=1) if c.by.lower() == me),
+                    default=0)
+    rows = []
+    for i, c in enumerate(t.comments, start=1):
+        if not c.ask or c.by.lower() != me:
+            continue
+        answers = [(j, d) for j, d in enumerate(t.comments, start=1) if j > i and i in d.re]
+        if answers and last_mine < answers[-1][0]:
+            rows.append((i, c, answers[-1][0], answers[-1][1]))
+    return rows
+
+
 def _all_items(root: str) -> list[tuple[str, Ticket]]:
     """Every ticket and every thread. No lock here: callers that compute
     pending take the board lock once around this call."""
@@ -1208,22 +1254,30 @@ def inbox_rows(root: str, name: str | None = None) -> list[dict]:
     pending ask with its recipient: the human's view."""
     with board_lock(root):
         items = _all_items(root)
+    def row(col, t, n, c, state, asked):
+        return {
+            "id": t.id,
+            "kind": "thread" if is_thread(col) else "ticket",
+            "column": col,
+            "title": t.title,
+            "n": n,
+            "by": c.by,
+            "to": c.to,
+            "at": c.at,
+            "commit": c.commit,
+            "summary": _first_line(c.body),
+            "state": state,
+            "asked": asked,
+        }
+
     rows = []
     for col, t in items:
         for n, c in pending_asks(t, name):
-            rows.append({
-                "id": t.id,
-                "kind": "thread" if is_thread(col) else "ticket",
-                "column": col,
-                "title": t.title,
-                "n": n,
-                "by": c.by,
-                "to": c.to,
-                "at": c.at,
-                "commit": c.commit,
-                "summary": _first_line(c.body),
-            })
-    rows.sort(key=lambda r: (r["at"], int(r["id"]), r["n"]), reverse=True)
+            rows.append(row(col, t, n, c, "awaiting", None))
+        if name is not None:
+            for ask_n, _, n, c in answered_unseen(t, name):
+                rows.append(row(col, t, n, c, "answered", ask_n))
+    rows.sort(key=lambda r: (r["state"] == "awaiting", r["at"], int(r["id"]), r["n"]), reverse=True)
     return rows
 
 
@@ -1231,11 +1285,19 @@ def _print_inbox(rows: list[dict]) -> None:
     if not rows:
         print("(nothing pending)")
         return
-    for r in rows:
-        commit = "  %s" % r["commit"] if r["commit"] else ""
-        print("%s  %-6s #%-3d %s to %s  %s%s\n      %s"
-              % (r["id"], r["kind"], r["n"], r["by"], r["to"],
-                 r["at"].replace("T", " ").rstrip("Z"), commit, r["summary"][:110]))
+    for state, heading in (("awaiting", "AWAITING YOUR REPLY"),
+                           ("answered", "ANSWERED, NOT YET SEEN BY YOU")):
+        section = [r for r in rows if r["state"] == state]
+        if not section:
+            continue
+        print("%s (%d)" % (heading, len(section)))
+        for r in section:
+            commit = "  %s" % r["commit"] if r["commit"] else ""
+            asked = "  (your #%d)" % r["asked"] if r["asked"] else ""
+            print("  %s  %-6s #%-3d %s to %s  %s%s%s\n        %s"
+                  % (r["id"], r["kind"], r["n"], r["by"], r["to"],
+                     r["at"].replace("T", " ").rstrip("Z"), commit, asked, r["summary"][:110]))
+        print()
 
 
 def _print_threads(rows: list[Ticket]) -> None:
@@ -1387,7 +1449,7 @@ The existing `except (KeyError, ValueError, RuntimeError, OSError)` at the end o
 - [ ] **Step 7: Run the new tests and the whole suite**
 
 Run: `python3.14 -m unittest tests.test_board.TestPending tests.test_board.TestConversationCLI -v 2>&1 | tail -25`
-Expected: 18 tests PASS.
+Expected: 20 tests PASS.
 
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK`.

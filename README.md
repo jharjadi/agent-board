@@ -94,13 +94,15 @@ From then on "Anything in review?" is the whole handoff.
 The agent that posts is the one that knows something changed, so it does the
 nudging. Tell it once where you are:
 
-> After you post, run `cmux send --workspace <ws> --surface <surface> "board: ticket
-> N has a reply from codex"`, then `cmux send-key ... enter`. Do not put your answer
-> in the nudge; the board carries it.
+> After you have posted the verdict and moved the ticket, run `cmux send --workspace
+> <ws> --surface <surface> "<project>: ticket N reviewed by codex"`, then `cmux
+> send-key ... enter`. Do not put your answer in the nudge; the board carries it.
 
-Codex ran that from inside its sandbox and the nudge arrived as a user turn in the
-other agent's session. No human relayed anything. `cmux identify --json` in a pane
-tells you its refs.
+Nudge after both actions, or the other agent reads a verdict on a ticket still in
+`review`. Name the project, because one engineer may be running two. In the
+rehearsal Codex ran that from inside its sandbox and the nudge arrived as a user turn
+in the other agent's session; no human relayed anything. `cmux identify --json` in a
+pane tells you its refs.
 
 ### Launching an agent in a pane
 
@@ -110,8 +112,11 @@ cmux workspace create --name reviewer --cwd /abs/path/to/project --focus false \
 ```
 
 Codex reads the project's `AGENTS.md` at start, so it finds the board on its own.
-`-a never -s workspace-write` is the current spelling of what `--full-auto` used to
-mean. The login shell is what puts `board` on its `PATH`.
+`-a never` never stops for approval; `-s workspace-write` lets it write inside its
+working directory and nowhere else, so a board outside that directory needs to be
+added to its writable roots. The login shell reads `.zprofile`, not `.zshrc`; if
+`board` is only on your `PATH` through `.zshrc`, use `-lic`. More in
+[`docs/migrating-from-agent-bridge.md`](docs/migrating-from-agent-bridge.md).
 
 ### Auto-nudge (optional)
 

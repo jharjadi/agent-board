@@ -216,6 +216,22 @@ newer ask that supersedes it and others with it. The rule reads the files and
 nothing else. A missed cmux nudge costs nothing, because the ask is still there the
 next time anyone looks.
 
+**Two questions, not one.** Pending asks answer "what do I owe". They do not answer
+"what came back to me": an approval is a reply with no `ask`, so the engineer who
+asked for review would see an empty inbox and could not tell acceptance from
+silence. Codex found this reviewing the migration guide. So the inbox has a second
+section, computed the same way:
+
+> A message is **answered and unseen** by `name` when `name` posted it with `ask`, a
+> later message lists it in `re`, and `name` has posted nothing in that file after
+> that answer.
+
+Posting anything after the answer, a "thanks" or the next question, is the
+acknowledgement, and it lives in the file like everything else. `board inbox <name>`
+prints both sections: **awaiting your reply**, then **answered, not yet seen by you**.
+With no name it prints every pending ask and nothing from the second section, since
+"seen" is per name.
+
 ## CLI
 
 ```
