@@ -229,7 +229,13 @@ def neutralise_body(body: str) -> str:
     """A body line shaped like a header would parse as a new message and, with
     `re`, could clear a real request. A leading backslash defeats the anchored
     parser, survives the strip the parser and renderer apply to bodies, and
-    renders as literal text in markdown."""
+    renders as literal text in markdown.
+
+    Line endings are normalised first, because the escape must see the same
+    lines the reader will. Tickets are read in text mode, where a bare carriage
+    return becomes a newline; splitting on newlines alone left a header the
+    escape never inspected and the parser then honoured."""
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
     return "\n".join("\\" + line if COMMENT_RE.match(line) else line
                      for line in body.split("\n"))
 
