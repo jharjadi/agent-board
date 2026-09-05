@@ -796,14 +796,14 @@ body{margin:0;padding:20px 24px;background:#f4f5f7;color:#172b4d;
  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 h1{font-size:16px;font-weight:600;margin:0 0 3px;letter-spacing:-.01em}
 .sub{color:#6b778c;font-size:12px;margin:0 0 18px}
-.cols{display:flex;gap:10px;align-items:flex-start;padding-bottom:8px}
+.cols{display:flex;gap:10px;align-items:flex-start;padding-bottom:8px;overflow-x:auto}
 .col{background:#ebecf0;border-radius:4px;padding:8px;flex:1 1 0;min-width:200px;min-height:110px}
 .col h2{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;
  text-transform:uppercase;letter-spacing:.08em;color:#5e6c84;margin:4px 6px 10px}
 .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
 .n{margin-left:auto;color:#5e6c84;font-weight:600}
 .t{background:#fff;border-radius:3px;padding:10px 12px;margin-bottom:8px;
- box-shadow:0 1px 2px rgba(9,30,66,.2)}
+ box-shadow:0 1px 2px rgba(9,30,66,.2);min-width:0;overflow-wrap:anywhere}
 .t:hover{box-shadow:0 2px 6px rgba(9,30,66,.25)}
 .title{font-size:14px;font-weight:500;margin-bottom:5px;word-wrap:break-word}
 .desc{color:#5e6c84;font-size:12.5px;margin:0 0 6px;white-space:pre-wrap;word-wrap:break-word}
@@ -832,13 +832,45 @@ input,textarea{font:inherit;font-size:12px;padding:4px 8px;border:1px solid #dfe
  background:#fafbfc;border-radius:3px;color:#172b4d;min-width:0;flex:1}
 input:focus,textarea:focus{outline:none;background:#fff;border-color:#4c9aff;
  box-shadow:0 0 0 2px rgba(76,154,255,.25)}
-.add{margin-top:18px;background:#fff;border-radius:4px;padding:14px;max-width:420px;
+.add{flex:1 1 300px;min-width:0;margin-top:18px;background:#fff;border-radius:4px;padding:14px;max-width:420px;
  box-shadow:0 1px 2px rgba(9,30,66,.2)}
 .add h3{margin:0 0 9px;font-size:11px;font-weight:700;color:#5e6c84;
  text-transform:uppercase;letter-spacing:.08em}
 .add input,.add textarea{width:100%;margin-bottom:8px;display:block}
 .add textarea{resize:vertical}
 .empty{color:#8993a4;font-size:12px;padding:8px 6px}
+.num{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#8993a4;margin-right:6px}
+.bg{display:inline-block;font-size:10.5px;font-weight:600;color:#42526e;background:#f4f5f7;
+ border-radius:3px;padding:0 5px;margin-left:5px;vertical-align:1px}
+.bg.ask{background:#fff0b3;color:#7f5f01}
+.bg.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:500}
+.c.pend{border-left:3px solid #ff8b00;padding-left:7px}
+.pending{background:#ffebe6;color:#bf2600;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600}
+.about{color:#6b778c;font-size:11px}
+.wait{background:#fffae6;border:1px solid #ffe380;border-radius:4px;padding:10px 14px;margin:0 0 16px}
+.wait h3{margin:0 0 6px;font-size:11px;font-weight:700;color:#7f5f01;text-transform:uppercase;letter-spacing:.08em}
+.wait ul{margin:0;padding-left:18px;font-size:12.5px}
+.wait li{margin:2px 0;overflow-wrap:anywhere}
+.wait a{color:#0052cc;text-decoration:none;font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace}
+.sec{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;text-transform:uppercase;
+ letter-spacing:.08em;color:#5e6c84;margin:22px 0 10px}
+.threads{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:10px;align-items:start}
+.threads .t{margin-bottom:0}
+.sm{flex:0 0 74px}
+label.ask{display:flex;align-items:center;gap:3px;font-size:11px;color:#42526e;white-space:nowrap}
+label.ask input{flex:0 0 auto;min-width:0}
+.adds{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.add .row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.add .row input{margin-bottom:0;width:auto}
+.add .row>input{flex:1 1 100px}
+label.ask input{width:auto;margin:0}
+.reply-form{display:flex;gap:6px;flex-wrap:wrap}
+.reply-form textarea{flex:1 1 100%;width:100%;resize:vertical}
+.reply-form>input:not([type=hidden]){flex:1 1 100px;width:100%;min-width:0}
+.reply-form label.ask{flex:1 1 100px}
+.t:target{outline:2px solid #4c9aff;outline-offset:2px}
+@media(max-width:850px){.threads{grid-template-columns:1fr}}
+@media(max-width:480px){body{padding:16px}.add{max-width:none}}
 """
 
 
@@ -851,8 +883,46 @@ def _project_label(root: str) -> str:
     return os.path.basename(project) or project
 
 
+def _render_comments(t: Ticket) -> str:
+    """Messages with their number and badges. Pending asks get a left rule."""
+    esc = html.escape
+    pending = {n for n, _ in pending_asks(t)}
+    rows = []
+    for n, c in enumerate(t.comments, start=1):
+        badges = ""
+        if c.to:
+            badges += '<span class="bg">to %s</span>' % esc(c.to)
+        if c.ask:
+            badges += '<span class="bg ask">ask</span>'
+        if c.re:
+            badges += '<span class="bg">re %s</span>' % esc(",".join(str(x) for x in c.re))
+        if c.commit:
+            badges += '<span class="bg mono">%s</span>' % esc(c.commit)
+        rows.append(
+            '<div class="c%s"><span class="num">#%d</span><span class="who">%s</span>'
+            '<span class="when">%s</span>%s<div class="body">%s</div></div>'
+            % (" pend" if n in pending else "", n, esc(c.by),
+               esc(c.at.replace("T", " ").rstrip("Z")), badges, esc(c.body))
+        )
+    return '<div class="comments">%s</div>' % "".join(rows) if rows else ""
+
+
+def _comment_form(tid: str) -> str:
+    return (
+        '<form class="reply-form" method="post" action="/comment">'
+        '<input type="hidden" name="id" value="%s">'
+        '<textarea name="body" rows="2" placeholder="Add a message" '
+        'aria-label="Message" required></textarea>'
+        '<input name="by" placeholder="From" aria-label="From" value="human" required>'
+        '<input name="to" placeholder="To (optional)" aria-label="To (optional)">'
+        '<input name="re" placeholder="Reply to # (e.g. 1,2)" aria-label="Reply to message numbers">'
+        '<label class="ask"><input type="checkbox" name="ask" value="1">Request reply</label>'
+        '<button>Send</button></form>' % html.escape(tid)
+    )
+
+
 def _render_card(t, col: str) -> str:
-    """One ticket card: identity, body, comments, then actions behind a toggle."""
+    """One ticket card: identity, body, messages, then actions behind a toggle."""
     esc = html.escape
     moves = "".join(
         '<form class="inline" method="post" action="/move">'
@@ -867,79 +937,125 @@ def _render_card(t, col: str) -> str:
         '<input name="owner" placeholder="Assign to (hint)" value="%s">'
         "<button>Set</button></form>" % (esc(t.id), esc(t.owner or ""))
     )
-    comment_form = (
-        '<form class="inline" method="post" action="/comment">'
-        '<input type="hidden" name="id" value="%s">'
-        '<input name="body" placeholder="Add a comment" required>'
-        "<button>Send</button></form>" % esc(t.id)
-    )
-
     desc = '<div class="desc">%s</div>' % esc(t.description) if t.description else ""
     owner = '<span class="own">%s</span>' % esc(t.owner) if t.owner else ""
-    count = ('<span class="cnt">%d comment%s</span>'
+    count = ('<span class="cnt">%d message%s</span>'
              % (len(t.comments), "" if len(t.comments) == 1 else "s")) if t.comments else ""
-
-    comments = ""
-    if t.comments:
-        rows = "".join(
-            '<div class="c"><span class="who">%s</span><span class="when">%s</span>'
-            '<div class="body">%s</div></div>'
-            % (esc(c.by), esc(c.at.replace("T", " ").rstrip("Z")), esc(c.body))
-            for c in t.comments
-        )
-        comments = '<div class="comments">%s</div>' % rows
-
+    pend = len(pending_asks(t))
+    pending = '<span class="pending">%d pending</span>' % pend if pend else ""
     return (
-        '<div class="t">'
+        '<div class="t" id="card-%s">'
         '<div class="title">%s</div>%s'
-        '<div class="meta"><span class="id">%s</span>%s%s</div>'
+        '<div class="meta"><span class="id">%s</span>%s%s%s</div>'
         "%s"
         '<details><summary>Actions</summary><div class="acts">'
         '<div class="pills">%s</div>%s%s</div></details>'
         "</div>"
-        % (esc(t.title), desc, esc(t.id), owner, count,
-           comments, moves, assign_form, comment_form)
+        % (esc(t.id), esc(t.title), desc, esc(t.id), owner, count, pending,
+           _render_comments(t), moves, assign_form, _comment_form(t.id))
     )
 
 
+def _render_thread_card(t: Ticket) -> str:
+    """A thread has no column and no owner: title, messages, reply form."""
+    esc = html.escape
+    count = '<span class="cnt">%d message%s</span>' % (len(t.comments), "" if len(t.comments) == 1 else "s")
+    pend = len(pending_asks(t))
+    pending = '<span class="pending">%d pending</span>' % pend if pend else ""
+    about = '<span class="about">about %s</span>' % esc(t.ticket) if t.ticket else ""
+    return (
+        '<div class="t" id="card-%s">'
+        '<div class="title">%s</div>'
+        '<div class="meta"><span class="id">%s</span>%s%s%s</div>'
+        "%s"
+        '<details><summary>Reply</summary><div class="acts">%s</div></details>'
+        "</div>"
+        % (esc(t.id), esc(t.title), esc(t.id), count, pending, about,
+           _render_comments(t), _comment_form(t.id))
+    )
+
+
+def _render_waiting(items: list[tuple[str, Ticket]]) -> str:
+    """Every pending ask on the board, newest first. `board inbox` with no
+    name, rendered. No input and no filter, so nothing fights the refresh."""
+    esc = html.escape
+    rows = []
+    for col, t in items:
+        for n, c in pending_asks(t):
+            rows.append((c.at, t, n, c))
+    if not rows:
+        return ""
+    rows.sort(key=lambda r: (r[0], int(r[1].id), r[2]), reverse=True)
+    lis = "".join(
+        '<li><a href="#card-%s">%s #%d</a> <b>%s</b> to <b>%s</b>: %s</li>'
+        % (esc(t.id), esc(t.id), n, esc(c.by), esc(c.to), esc(_first_line(c.body)))
+        for _, t, n, c in rows
+    )
+    return '<div class="wait"><h3>Waiting</h3><ul>%s</ul></div>' % lis
+
 def render_board_html(root: str) -> str:
     esc = html.escape
+    with board_lock(root):
+        items = _all_items(root)
+    by_col: dict[str, list[Ticket]] = {col: [] for col in COLUMNS}
+    threads: list[Ticket] = []
+    for col, t in items:
+        (threads if is_thread(col) else by_col[col]).append(t)
+    total = sum(len(v) for v in by_col.values())
     cols_html = []
-    total = 0
     for col in COLUMNS:
-        rows = list_tickets(root, col)
-        total += len(rows)
-        cards = "".join(_render_card(t, col) for _, t in rows)
+        rows = by_col[col]
+        cards = "".join(_render_card(t, col) for t in rows)
         cols_html.append(
             '<div class="col"><h2><span class="dot" style="background:%s"></span>%s'
             '<span class="n">%d</span></h2>%s</div>'
             % (COLUMN_ACCENT.get(col, "#5e6c84"), esc(col), len(rows),
                cards or '<div class="empty">Nothing here</div>')
         )
+    thread_cards = "".join(_render_thread_card(t) for t in threads) \
+        or '<div class="empty">No threads yet</div>'
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         # A meta refresh reloads mid-typing and destroys whatever is in a form.
-        # Poll instead, and skip the reload while the user is editing.
+        # Poll instead, and skip the reload while the user is editing: a field
+        # counts as edited when its value differs from what the page loaded,
+        # so a prefilled owner or author does not freeze the page forever.
         "<script>setInterval(function(){"
         "var a=document.activeElement;"
         "if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;"
-        "var f=document.querySelectorAll('input[type=text],input:not([type]),textarea');"
-        "for(var i=0;i<f.length;i++){if(f[i].value.trim())return;}"
+        "if(document.querySelector('details[open]'))return;"
+        "var f=document.querySelectorAll('input:not([type=hidden]),textarea,select');"
+        "for(var i=0;i<f.length;i++){"
+        "if(f[i].type==='checkbox'||f[i].type==='radio'){"
+        "if(f[i].checked!==f[i].defaultChecked)return;"
+        "}else if(f[i].value!==f[i].defaultValue)return;}"
         "location.reload();},3000);</script>"
         "<title>agent-board</title><style>%s</style></head><body>"
         "<h1>agent-board</h1>"
-        "<p class='sub'>%d ticket%s &middot; %s</p>"
+        "<p class='sub'>%d ticket%s &middot; %d thread%s &middot; %s</p>"
+        "%s"
         "<div class='cols'>%s</div>"
+        "<h2 class='sec'>Threads <span class='n'>%d</span></h2>"
+        "<div class='threads'>%s</div>"
+        "<div class='adds'>"
         "<div class='add'><h3>New ticket</h3><form method='post' action='/new'>"
         "<input name='title' placeholder='Title' required>"
         "<textarea name='desc' rows='3' placeholder='Description (optional)'></textarea>"
         "<button>Create</button></form></div>"
+        "<div class='add'><h3>New thread</h3><form method='post' action='/thread'>"
+        "<input name='title' placeholder='Title' required>"
+        "<textarea name='body' rows='3' placeholder='Opening message' required></textarea>"
+        "<div class='row'><input name='by' placeholder='From' aria-label='From' value='human' required>"
+        "<input name='to' placeholder='To (optional)' aria-label='To (optional)'>"
+        "<label class='ask'><input type='checkbox' name='ask' value='1'>Request reply</label></div>"
+        "<button>Start thread</button></form></div>"
+        "</div>"
         "</body></html>"
-        % (PAGE_CSS, total, "" if total == 1 else "s",
-           esc(_project_label(root)), "".join(cols_html))
+        % (PAGE_CSS, total, "" if total == 1 else "s", len(threads), "" if len(threads) == 1 else "s",
+           esc(_project_label(root)), _render_waiting(items), "".join(cols_html),
+           len(threads), thread_cards)
     )
-
 
 def _make_handler(root: str):
     class Handler(BaseHTTPRequestHandler):
@@ -982,7 +1098,19 @@ def _make_handler(root: str):
                 elif path == "/comment":
                     add_comment(root, (fields.get("id") or [""])[0],
                                 (fields.get("body") or [""])[0],
-                                (fields.get("by") or ["human"])[0])
+                                (fields.get("by") or ["human"])[0],
+                                to=(fields.get("to") or [""])[0].strip() or None,
+                                ask="ask" in fields,
+                                refs=_parse_refs((fields.get("re") or [""])[0]),
+                                commit=(fields.get("commit") or [""])[0].strip() or None)
+                elif path == "/thread":
+                    title = (fields.get("title") or [""])[0].strip()
+                    if title:
+                        create_thread(root, title, (fields.get("body") or [""])[0],
+                                      (fields.get("by") or ["human"])[0].strip() or "human",
+                                      to=(fields.get("to") or [""])[0].strip() or None,
+                                      ask="ask" in fields,
+                                      commit=(fields.get("commit") or [""])[0].strip() or None)
                 else:
                     self.send_error(404)
                     return

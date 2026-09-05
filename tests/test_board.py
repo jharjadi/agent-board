@@ -507,6 +507,7 @@ class TestWebUI(unittest.TestCase):
             conn.close()
         finally:
             server.shutdown()
+            server.server_close()
 
     def test_oversized_content_length_returns_400(self):
         """Content-Length larger than MAX_BODY_BYTES should return HTTP 400."""
@@ -523,6 +524,7 @@ class TestWebUI(unittest.TestCase):
             conn.close()
         finally:
             server.shutdown()
+            server.server_close()
 
     def test_valid_post_still_works(self):
         """Valid POST to /move should return 303 and move the ticket."""
@@ -545,6 +547,7 @@ class TestWebUI(unittest.TestCase):
             self.assertEqual(col, "done")
         finally:
             server.shutdown()
+            server.server_close()
 
     def test_corrupt_ticket_file_returns_500_not_dead_connection(self):
         """A deliberately corrupt .md file should yield an HTTP error
@@ -567,6 +570,7 @@ class TestWebUI(unittest.TestCase):
             conn.close()
         finally:
             server.shutdown()
+            server.server_close()
 
     def test_comment_form_present_and_reachable(self):
         """POST /comment must be wired up from the UI: each ticket card
@@ -596,6 +600,7 @@ class TestWebUI(unittest.TestCase):
             self.assertEqual(t.comments[0].body, "looks good")
         finally:
             server.shutdown()
+            server.server_close()
 
 
 
@@ -695,7 +700,8 @@ class TestRefreshAndPort(unittest.TestCase):
 
     def test_reload_skips_when_a_field_has_text_but_no_focus(self):
         page = board.render_board_html(self.root)
-        self.assertIn("value.trim()", page)
+        self.assertIn("defaultValue", page)
+        self.assertNotIn("value.trim()", page)
         self.assertIn("textarea", page)
 
     def test_forms_still_present(self):
@@ -1546,3 +1552,104 @@ class TestConversationCLI(unittest.TestCase):
         self.assertNotIn("showing 2-1", out)
         code, _ = self.run_cli("show", "1", "--last", "-1")
         self.assertEqual(code, 2)
+
+
+class TestConversationUI(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @contextlib.contextmanager
+    def server(self):
+        srv = board.HTTPServer(("127.0.0.1", 0), board._make_handler(self.root))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            yield http.client.HTTPConnection("127.0.0.1", srv.server_port)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def post(self, conn, path, body):
+        conn.request("POST", path, body, {"Content-Length": str(len(body)),
+                                          "Content-Type": "application/x-www-form-urlencoded"})
+        resp = conn.getresponse()
+        resp.read()
+        return resp.status
+
+    def test_thread_card_renders_title_count_pending_and_link(self):
+        board.create_ticket(self.root, "the work")
+        tid = board.create_thread(self.root, "Design A vs B", "q", "claude", to="codex", ask=True, ticket="1")
+        page = board.render_board_html(self.root)
+        self.assertIn("Design A vs B", page)
+        self.assertIn('id="card-%s"' % tid, page)
+        self.assertIn("1 pending", page)
+        self.assertIn("about 001", page)
+        self.assertIn("Threads", page)
+
+    def test_message_badges_and_numbers(self):
+        tid = board.create_thread(self.root, "t", "q", "claude", to="codex", ask=True, commit="a1b2c3d")
+        board.add_comment(self.root, tid, "a", "codex", to="claude", refs=[1])
+        page = board.render_board_html(self.root)
+        self.assertIn("to codex", page)
+        self.assertIn(">ask<", page)
+        self.assertIn("re 1", page)
+        self.assertIn("a1b2c3d", page)
+        self.assertIn("#1", page)
+        self.assertIn("#2", page)
+
+    def test_waiting_strip_lists_pending_and_empties_when_answered(self):
+        tid = board.create_thread(self.root, "t", "please look", "claude", to="codex", ask=True)
+        page = board.render_board_html(self.root)
+        self.assertIn('class="wait"', page)
+        self.assertIn('href="#card-%s"' % tid, page)
+        self.assertIn("please look", page)
+        board.add_comment(self.root, tid, "done", "codex", refs=[1])
+        self.assertNotIn('class="wait"', board.render_board_html(self.root))
+
+    def test_badges_are_escaped(self):
+        tid = board.create_thread(self.root, "t", "q", "claude", to="<b>x</b>", ask=True)
+        page = board.render_board_html(self.root)
+        self.assertNotIn("<b>x</b>", page)
+
+    def test_forms_carry_the_new_fields(self):
+        board.create_ticket(self.root, "k")
+        page = board.render_board_html(self.root)
+        self.assertIn("action='/thread'", page)
+        self.assertIn('name="to"', page)
+        self.assertIn('name="ask"', page)
+        self.assertIn('name="re"', page)
+
+    def test_post_thread_matches_the_cli(self):
+        with self.server() as conn:
+            status = self.post(conn, "/thread", "title=Design&body=Opening+line&by=jimmy&to=codex&ask=1")
+        self.assertEqual(status, 303)
+        col, path = board.find_ticket(self.root, "1")
+        self.assertEqual(col, board.THREADS_DIR)
+        t = board.load_ticket(path)
+        self.assertEqual((t.title, t.comments[0].by, t.comments[0].to, t.comments[0].ask, t.comments[0].body),
+                         ("Design", "jimmy", "codex", True, "Opening line"))
+
+    def test_post_comment_with_trailers(self):
+        tid = board.create_thread(self.root, "t", "q", "claude", to="human", ask=True)
+        with self.server() as conn:
+            status = self.post(conn, "/comment", "id=%s&body=answer&to=claude&re=1&ask=1" % tid)
+            self.assertEqual(status, 303)
+            status = self.post(conn, "/comment", "id=%s&body=bad&re=zero" % tid)
+            self.assertEqual(status, 400)
+        _, path = board.find_ticket(self.root, tid)
+        t = board.load_ticket(path)
+        self.assertEqual(len(t.comments), 2)
+        c = t.comments[1]
+        self.assertEqual((c.by, c.to, c.re, c.ask), ("human", "claude", [1], True))
+        self.assertEqual(board.pending_asks(t, "human"), [])
+
+    def test_page_is_a_projection(self):
+        tid = board.create_thread(self.root, "t", "q", "claude", to="codex", ask=True)
+        before = board.render_board_html(self.root)
+        board.add_comment(self.root, tid, "a", "codex", refs=[1])
+        after = board.render_board_html(self.root)
+        self.assertNotEqual(before, after)
+        self.assertEqual(after, board.render_board_html(self.root))
