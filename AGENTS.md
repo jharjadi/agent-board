@@ -8,7 +8,7 @@ Single file `board.py`, standard library only, **Python 3.11+**.
 
 Read `docs/decisions.md`. It records what was deliberately rejected and why — a
 registry, a scheduler, leases, JSON tickets, SQLite, a `status` field, presence
-indicators. Several look like obvious improvements and are not; they are what turns
+indicators, message types, thread status, and a per-name inbox UI filter. Several look like obvious improvements and are not; they are what turns
 a board into an expensive orchestrator.
 
 The line that matters: **the board never knows which agents exist.** Assignment is
@@ -34,3 +34,6 @@ python3.14 -m unittest discover -s tests -v    # NOT python3 — that is 3.9.6 h
 `docs/superpowers/specs/2026-09-04-agent-board-design.md` — what and why.
 `docs/superpowers/plans/2026-09-04-agent-board.md` — how it was built.
 `docs/decisions.md` — every ruling made during the build.
+
+`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md` — threads and inbox, what and why.
+`docs/superpowers/plans/2026-09-05-threads-and-inbox.md` — implementation and validation.

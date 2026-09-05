@@ -289,22 +289,41 @@ def agents_block() -> str:
     return """%s
 ## Task board
 
-This project uses agent-board. The board lives in `.agent-board/`; each column
-is a directory and each ticket is a markdown file.
+This project uses agent-board. The board lives in `.agent-board/`: each column
+is a directory, each ticket is a markdown file, and `threads/` holds
+conversations that are not about a ticket.
 
+    board inbox <you>                 what is waiting on you. Run this first.
     board list                        see the whole board
-    board list todo                   see one column
-    board show 7                      read a ticket, with its comments
-    board take 7 --owner <you>        claim it (moves to doing/)
+    board show 7                      read a ticket or thread, with its messages
+    board show 7 --last 3             only the latest messages
+    board take 7 --owner <you>        claim a ticket (moves to doing/)
     board comment 7 "..." --by <you>  report back on it
     board move 7 review               hand it on
+    board thread "title" "..." --by <you> --to <them> --ask
+                                      start a conversation with another agent
+    board threads                     list conversations
 
-Use your own name or role as `<you>` — whatever the user calls you. If the user
-has not told you which column is yours, ask, or take the top of `todo`. Read the
-ticket before starting, and report with `board comment` rather than only in chat,
-so the next agent sees what you did.
+Use your own name or role as `<you>`, whatever the user calls you, and use it
+consistently. If the user has not told you which column is yours, ask, or take
+the top of `todo`. Read the ticket before starting, and report with
+`board comment` rather than only in chat, so the next agent sees what you did.
+
+Talking to another agent: add `--to <them>` and `--ask` to `board comment` or
+`board thread` when you need an answer. Answer with `--re <n>`, listing every
+message number you are answering, and add `--ask` again if your answer needs
+one. Nothing is answered until a later message says `--re`, so trust
+`board inbox <you>`, not your memory. Put a one-line summary on the first line
+of every message; for anything longer than a paragraph use `--body-file PATH`,
+or `-` to read stdin.
+
+The inbox also shows answers to your asks until you post again in that file.
+Reading the file alone does not acknowledge an answer.
+
+After you post, nudge the recipient yourself if you know its pane, for example
+with `cmux send`. The board never notifies anyone, and the nudge must carry no
+content: the message is in the file.
 %s""" % (AGENTS_BEGIN, AGENTS_END)
-
 
 def _upsert_block(path: str, block: str) -> None:
     """Insert or replace the delimited block, preserving everything else."""

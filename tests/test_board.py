@@ -676,6 +676,11 @@ class TestAgentsDoc(unittest.TestCase):
         self.assertIn("ask", text)
 
 
+    def test_block_teaches_inbox_threads_and_re(self):
+        board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md")
+        for needle in ("board inbox", "board thread", "--re", "--ask", "--body-file", "nudge"):
+            self.assertIn(needle, text, needle)
 
 class TestRefreshAndPort(unittest.TestCase):
     def setUp(self):

@@ -29,10 +29,15 @@ board take 1 --owner codex --from todo  # refuse if someone already claimed it
 board comment 1 "Fixed in a1b2c3d" --by claude
 board move 1 review
 board assign 1 codex                    # advisory owner hint, no move
+board thread "Design A vs B" "Attack the filter first" --by claude --to codex --ask
+board inbox codex                       # requests waiting on codex
+board comment 2 "Changes requested" --by codex --to claude --ask --re 1 --commit a1b2c3d
+board threads                           # conversations, newest activity first
+board show 2 --last 3                   # latest messages, keeping their numbers
 board serve                             # http://127.0.0.1:8899
 ```
 
-Everything the CLI does, the web UI does too — create, move, assign, comment. The UI
+The web UI can create, move, and assign tickets, start threads, and post replies. The UI
 is a projection over the filesystem: it owns no state, and a hard refresh rebuilds
 the whole page from disk.
 
@@ -51,7 +56,8 @@ Which means you assign work in plain English:
 > Take ticket 1 from the board. You're `codex`.
 
 The agent runs `board show 1`, claims it with `board take 1 --owner codex`, does the
-work, and reports with `board comment`. Nothing to explain, no inbox to check.
+work, and reports with `board comment`. It checks `board inbox codex` for addressed
+requests and answers to its own questions.
 
 Hand it on the same way:
 
@@ -134,6 +140,40 @@ and version-controlled. An agent running with `--yolo` or
 `--dangerously-skip-permissions` cannot tell injected keystrokes from the human
 typing, so instructions must never travel over `cmux send`.
 
+### Talking to each other
+
+Use a thread for a conversation that does not need a ticket. The command prints
+its ID; use that ID when replying:
+
+```bash
+board thread "Float or Decimal?" "Should calc keep returning floats?" --by claude --to codex --ask
+board inbox codex
+board comment <id> "Keep float; changing return types would break callers." --by codex --to claude --re 1
+board inbox claude
+```
+
+Threads are markdown files under `.agent-board/threads/`, with no column, owner,
+status, or close action. Tickets and threads share IDs and the same message format:
+
+- `--to NAME` addresses a message; `--ask` requests a reply and requires `--to`.
+- `--re 1,2` answers earlier messages in that same file. **An ask stays pending
+  until a later message explicitly lists it in `re`.**
+- `--commit TEXT` records the commit being discussed without checking Git.
+
+`board inbox NAME` shows requests awaiting your reply, then answers to your own
+asks that you have not acknowledged. Posting anything in that file after an answer
+acknowledges it; reading alone does not. A reply can request another reply with
+`--re 1 --to NAME --ask`. An approval only needs `--re 1`.
+
+`board inbox` without a name lists every pending ask, also shown in the web UI's
+Waiting strip. `board threads --json`, `board inbox NAME --json`, and
+`board show ID --last 3 --json` expose the same information to scripts. Message
+numbers in a shortened view remain the original numbers in the file.
+
+Use `--body-file PATH` for long messages, or `--body-file -` to read stdin. Each
+message should start with a one-line summary for the inbox. The board does not
+send notifications; a poster may nudge a recipient separately.
+
 ## Replacing `.agent-bridge`
 
 This board replaces the `.agent-bridge` mailbox that preceded it. Every bridge concept
@@ -142,17 +182,20 @@ the bridge grew are worth keeping in your project as they are. The steps, the ma
 and the distilled role contracts are in
 [`docs/migrating-from-agent-bridge.md`](docs/migrating-from-agent-bridge.md).
 
-One gap is real today: a question to another agent that is not about a ticket has no
-home yet. Threads and an inbox are specified and planned, see
+Conversations without tickets now have threads and an inbox. See
 [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md).
 
 ## Rules
+
+- **Replies are explicit.** Use `--re`; who spoke last does not determine whether an ask is answered.
 
 - The **directory is the only truth**. There is no `status` field.
 - The board carries coordination; **git carries code**. Diffs never go in tickets.
 - Give each agent its own **git worktree** so they cannot corrupt each other — and point them all at one board with `AGENT_BOARD_ROOT=/abs/path/to/.agent-board`. Without it each worktree discovers its own copy, and moving a ticket in one is invisible to the others.
 
 ## Known limitations
+
+- **Message numbers are positions.** Appending preserves them, but inserting or deleting message headers by hand changes what later `re` references mean. Edit bodies, not the message sequence.
 
 - **Watcher granularity.** `board watch` detects change by file mtime. Two edits landing within the same mtime tick are seen as one change, and because `os.replace` does not update mtime, a ticket that leaves a column and returns before the next poll is not re-flagged. Poll interval defaults to 5s.
 - **Advisory locking only.** Mutations serialise on `fcntl.flock` over `.agent-board/.lock`, which the kernel releases when a process dies — no stale locks. But it is advisory: hand-editing a ticket file, or any tool that does not go through `board`, bypasses it entirely. POSIX only; `fcntl` does not exist on Windows.
@@ -180,7 +223,7 @@ review, including an id-allocation scheme that was wrong twice.
 - [`docs/decisions.md`](docs/decisions.md) — what was rejected, and why
 - [`docs/superpowers/specs/2026-09-04-agent-board-design.md`](docs/superpowers/specs/2026-09-04-agent-board-design.md) — the design
 - [`docs/superpowers/plans/2026-09-04-agent-board.md`](docs/superpowers/plans/2026-09-04-agent-board.md) — how it was built
-- [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md) — threads and the inbox, specified, not yet built
+- [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md) — threads and the inbox
 - [`docs/migrating-from-agent-bridge.md`](docs/migrating-from-agent-bridge.md) — replacing `.agent-bridge`, and what it taught
 
 ## Scope

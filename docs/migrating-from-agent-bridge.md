@@ -11,14 +11,17 @@ supported: **in the files** means the committed board and git history show it;
 **reported** means the engineer read it in the reviewer's pane transcript, which the
 files do not contain.
 
-## What is here today, and what is specified but not built
+## What is available
 
-Today the board has tickets, columns, comments, owner hints, `board watch`, and a
-web UI. **Threads and an inbox are specified and planned, not shipped.** See
-`superpowers/specs/2026-09-05-threads-and-inbox-design.md` and the plan next to it.
-Until they land, a question to another agent that is not about a ticket has no
-home, and "what is waiting on me" is `board list <column>`. The rehearsal hit
-exactly that gap, which is why the spec exists.
+The board supports tickets, columns, owner hints, addressed messages, threads,
+`board inbox`, `board watch`, and a web UI. A conversation without a ticket lives
+under `.agent-board/threads/`. `board inbox <name>` shows pending asks and answers
+to that person's asks until they post again in the file. See
+[`threads and inbox design`](superpowers/specs/2026-09-05-threads-and-inbox-design.md).
+
+The rehearsal below predates threads. Its ticket-based evidence remains the
+historical record; the threads implementation has separate automated and browser
+validation recorded in the implementation plan.
 
 ## What maps to what
 
@@ -26,16 +29,16 @@ exactly that gap, which is why the spec exists.
 |---|---|
 | `registry/tasks/*.json` with a `status` field | A ticket file. The column is the status. |
 | `assigned_to`, `reviewer` | `board assign` sets an advisory owner hint. The reviewer is whoever watches `review`. |
-| `threads/<TASK>/NNNN-<type>.json`, one file per message | Comments appended to the ticket. Threads for topics without a ticket are planned. |
-| Twelve message types plus ad hoc ones | Prose today. Planned: two trailers, `ask` and `re`, plus `commit`. |
-| `in_reply_to` | Say "re your comment 3" in prose today. Planned: the `re` trailer, a list. |
-| `head_commit`, `approved_head_commit` | Write the commit in the comment. Planned: a `commit` trailer. |
-| `inbox/<agent>/`, `state/*.json`, unread counters | `board list review` for the reviewer, `board list blocked` for the engineer. Planned: `board inbox <name>`, computed from `ask` and `re`, no state. |
-| `actionable.py` | Same as above. Its two patches, where the type heuristic hid a real request, are why pending will be computed from explicit replies. |
+| `threads/<TASK>/NNNN-<type>.json`, one file per message | Messages appended to a ticket, or a column-less thread for a topic without a ticket. |
+| Twelve message types plus ad hoc ones | Two trailers, `ask` and `re`, with `to` and `commit` carrying addressing and revision context. |
+| `in_reply_to` | `--re 3` or `--re 1,2,3`, referring to earlier messages in the same file. |
+| `head_commit`, `approved_head_commit` | `--commit HASH` records the reviewed revision; the poster and reviewer verify it. |
+| `inbox/<agent>/`, `state/*.json`, unread counters | `board inbox <name>`, computed from `ask` and `re`, with no counters or separate state files. Column listings still show assigned work. |
+| `actionable.py` | Same as above. Pending is computed from explicit replies because the old type heuristic hid real requests. |
 | `changes_requested`, then the fix round | The reviewer moves the ticket to `blocked` with what must change. `blocked` is the engineer's inbox for rejected work; the fix goes back through `review`. |
-| `blocked` addressed to the human | A ticket for the human, `board new ... --owner <human>`. Planned: an `ask` addressed to the human, which the waiting strip shows. |
+| `blocked` addressed to the human | A message with `--to human --ask`, shown in the waiting strip. Use a ticket when there is work to track. |
 | `bridge-watch.sh`, `wait-inbox.sh`, `bridge.py watch` | The poster nudges the recipient over cmux (reported working from inside Codex's sandbox). `board watch <column>` remains for a human-side nudger. |
-| `session-banner.sh`, `stop_hook.sh` | Deferred until `board inbox` exists. Until then a turn-end hook running `board list review` announces the reviewer's work to the engineer on every turn and misses the engineer's own rejected work. |
+| `session-banner.sh`, `stop_hook.sh` | Optional future integration: query `board inbox <you> --json`. No session or turn-end hook is installed by the board. |
 | `ENGINEER.md`, `REVIEWER.md` | Keep them, in the project, as role files, and **name them in the standing-role message** so they are read. Distilled versions below. |
 | `memory/engineer.md`, `memory/reviewer.md` | Keep them, in the project. Not a board concern. Convention and entry points below. |
 | `review.sh`, `review-status.sh` | A live pane: you can see the reviewer working, and it nudges back when done. Headless recipe below for when there is no pane. |
@@ -44,7 +47,7 @@ exactly that gap, which is why the spec exists.
 | `prehandoff.py` | Keep and adapt. Run it before `board move <id> review`. |
 | `codex-log.sh` | Codex tooling, not bridge tooling. Move it out of `.agent-bridge/tools` to wherever Codex scripts live before deleting the directory. |
 | `schemas/*.json` | Nothing. The board validates ids, columns, and frontmatter in code and has no message schema; the bridge's schemas were never enforced. |
-| `archive/YYYY-MM/` | Nothing. `done` is the archive and git is the history. Until threads exist, a design conversation with no ticket has no home; hold those in the backup. |
+| `archive/YYYY-MM/` | `done` holds completed tickets and git is the history. Threads remain in `threads/` without a close state; keep the bridge backup because there is no importer. |
 | `locks/*.lock` with a ten-second timeout | `.agent-board/.lock`, a kernel-held flock released when the process dies. |
 | Runtime gitignored, protocol committed | The board is committed. Only `.lock` is ignored. Every committed state travels with the repo; intermediate states between commits do not. |
 
@@ -65,8 +68,8 @@ exactly that gap, which is why the spec exists.
 3. **Init.** In the project root, `board init`. It creates `.agent-board/` and appends
    the agents block to `AGENTS.md`, symlinking `CLAUDE.md` to it if absent.
 4. **Cut the old instructions.** Remove every hit from step 1 in the instruction
-   files. Replace the "read your inbox first" lines with the standing-role text from
-   the README, naming the role file.
+   files. Replace the old inbox command with `board inbox <you>` and add the
+   standing-role text from the README, naming the role file.
 5. **Move the role files.** `.agent-bridge/ENGINEER.md` and `REVIEWER.md` become
    `docs/roles/engineer.md` and `docs/roles/reviewer.md`, rewritten in board
    vocabulary. The distilled contracts below are a starting point.
@@ -93,7 +96,8 @@ of rounds. Most of it survives a change of tool. Rewritten for the board:
 
 ### Reviewer
 
-- **Entry points.** At session start, read your role file and your memory file. At
+- **Entry points.** At session start, run `board inbox <you>`, then read your role
+  file and your memory file. At
   the end of a round, append to your memory file what you verified that a cold
   session would otherwise re-derive. The human's standing-role message names both
   files; moving them into `docs/roles/` does not make anyone read them.
@@ -121,9 +125,8 @@ of rounds. Most of it survives a change of tool. Rewritten for the board:
 
 ### Engineer
 
-- **Entry points.** At session start, `board list blocked` and `board list doing`
-  for your own tickets, then your memory file. Until `board inbox` exists, `blocked`
-  is where rejected work waits for you.
+- **Entry points.** At session start, `board inbox <you>`, `board list blocked`,
+  and `board list doing` for your own tickets, then your memory file.
 - Take work with `board take <id> --owner <you> --from todo`, so a ticket someone
   else already claimed is refused rather than stolen.
 - Scale review rounds to risk. A migration or a public interface gets its own round
@@ -275,21 +278,17 @@ appeared in the other's schema test.
 | Tracker synchronisation inside the coordination tool | Two records of one fact drift. If the project has a tracker, the human or the engineer updates it deliberately, as the bridge's role file already required. |
 | Role names as aliases (`claude` for `engineer`) | Choose a name once and use it. The alias map existed because the rename happened mid-flight. |
 
-## After threads land
+## Remaining candidates
 
-Candidates from the bridge that become small once `board inbox` exists, recorded on
-this repo's own board as ticket 010:
+The inbox now has both sections: pending requests and answers to your own asks
+until you post after them. The following candidates remain unimplemented, tracked
+on this repo's board as ticket 010:
 
-- **Two inbox sections, not one.** Pending asks answer "what do I owe". They do not
-  answer "what came back to me": an approval is a reply with no `ask`, so the
-  engineer who asked for review sees an empty inbox and cannot tell acceptance from
-  silence. The spec now adds a second section, asks you posted that were answered and
-  that you have not posted after. Codex found this reviewing this page.
 - `board inbox <you> --wait`: block until either section changes for a name, print,
   exit. `wait-inbox.sh` and `bridge-watch.sh` both did this, and both learned that a
   reply landing while nobody watches must still be reported later. Over both
   sections it is a poll loop and nothing else.
 - The turn-end hook, running `board inbox <you> --json` and emitting a system message
-  when either section is non-empty. Deferred until then, for the reason in the table.
+  when either section is non-empty. This is an optional integration, not installed behavior.
 - An importer for archived `.agent-bridge` thread JSON into board threads, for the
   two projects with history worth keeping.

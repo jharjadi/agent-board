@@ -82,3 +82,32 @@ Extracted from the execution ledger.
 - **Final** **— spec still says "Python 3.9+ (the macOS system python)" but the delivered code is
   root/{tid}.md — invisible to find/list, permanently inflates next_id. **— accept. The create
   "## comment — X · Y" line re-parses as an additional comment. **— accept for v1 and record
+
+## 2026-09-05 — threads and inbox
+
+The bridge's wake-up machinery is gone for good: with cmux the poster nudges the
+recipient. What the board lacked was the conversation itself. Measured across the
+41 threads and 549 messages in produxiom2 before designing, and reviewed by Codex
+against the code before building.
+
+| Decision | Why |
+|---|---|
+| Threads are column-less, with no status and no close | Liveness is "has an unanswered ask". A status field is what the board refused for tickets, for the same reason. |
+| No message types; two trailers, `ask` and `re` | Twelve types plus thirteen ad hoc ones reduce to two facts. `re` is a list because one thread superseded three open requests at once. |
+| Pending is computed from `ask` and `re`, never from who spoke last | produxiom2's tool guessed from the newest message's type and was patched twice after hiding a real request. |
+| Names are free strings; no roster, no aliases | The claude/engineer split came from renaming mid-flight. The fix is choosing a name once. |
+| The board never notifies and never runs git | The poster nudges. The human commits. The files are unignored, so committing the board commits the conversation. |
+| One file per thread, appended under the lock | Codex first argued for one file per message and withdrew it for a one-machine board. What it asked for instead, and got: readers that compute pending take the lock, and an append is one write loop. |
+| The header parser anchors on the timestamp | Anchoring on the first separator read an author of `alice · <ts> · to bob` and a timestamp of `ask`. Codex found it. |
+| Header-shaped body lines get a leading backslash on write | With `re`, a pasted example could clear a real request. A space would not survive the body `strip()`. |
+| The allocator scan runs under the board lock | It did not, and two creators could both win the same id after the first's reservation was renamed away. Codex reproduced it. |
+| Message numbers are positions, not ids | Adequate while appends never renumber. Stable ids are the fallback if hand edits to committed threads become common. |
+| `watch threads` and a per-name UI filter were cut | The first re-tests the mtime mechanism; the second fights the refresh guard and the POST redirect. `board inbox <name>` is the per-name view. |
+| The `ticket` link on a thread stays, optional | Codex would cut it. The human named conversations about tickets as a real case, and it is one field shown as text. |
+
+The inbox has two sections: asks awaiting your reply and answers to your own asks
+that you have not posted after. Reading is not acknowledgement; a later post is.
+
+Thread creation writes the opening message before the reservation is renamed into
+`threads/`, so a failed opening cannot publish an empty conversation. `--ticket`
+links only to a ticket, never another thread.

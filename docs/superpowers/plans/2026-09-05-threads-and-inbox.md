@@ -1,6 +1,6 @@
 # Threads and Inbox Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Execute task-by-task with the currently enabled development workflow. The user disabled Superpowers before this implementation; work was completed inline, with gstack browse for UI validation.
 
 **Goal:** Let agents hold persistent, addressed conversations on the board, with or without a ticket, and let any agent ask "what is waiting on me" and get an answer computed from the files.
 
@@ -54,7 +54,7 @@ The id scan in `create_ticket` runs outside the board lock. Two creators can bot
 - Consumes: `board_lock(root)`, `next_id(root)`, `render_ticket`, `slugify`, `sanitize_scalar`, `validate_column`, `validate_id`.
 - Produces: `_create_locked(root: str, title: str, description: str, dest_dir: str, owner: str | None = None) -> tuple[str, str]` returning `(id, final_path)`; caller holds the lock. `create_ticket` keeps its signature and return type (`str`). `find_ticket(root, tid) -> tuple[str, str]` now raises `ValueError` when an id matches more than one file.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_board.py`. Add `import time` and `from unittest import mock` to the imports at the top of the file (keep them alphabetical with the others).
 
@@ -109,12 +109,12 @@ class TestAllocatorLock(unittest.TestCase):
         self.assertTrue(path.endswith("007.md"))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python3.14 -m unittest tests.test_board.TestAllocatorLock -v`
 Expected: `test_scan_and_reserve_happen_under_the_lock` FAILS with `['001', '001']` (or similar duplicate). `test_find_ticket_refuses_an_ambiguous_id` FAILS because no `ValueError` is raised. The bare-file test passes already.
 
-- [ ] **Step 3: Move the allocation loop into a locked helper**
+- [x] **Step 3: Move the allocation loop into a locked helper**
 
 In `board.py`, replace the whole `create_ticket` function with these two functions:
 
@@ -164,7 +164,7 @@ def create_ticket(root: str, title: str, description: str = "",
     return tid
 ```
 
-- [ ] **Step 4: Make `find_ticket` collect every match and refuse more than one**
+- [x] **Step 4: Make `find_ticket` collect every match and refuse more than one**
 
 Replace `find_ticket`:
 
@@ -187,7 +187,7 @@ def find_ticket(root: str, tid: str) -> tuple[str, str]:
     return found[0]
 ```
 
-- [ ] **Step 5: Run the new tests and the whole suite**
+- [x] **Step 5: Run the new tests and the whole suite**
 
 Run: `python3.14 -m unittest tests.test_board.TestAllocatorLock -v`
 Expected: 3 tests PASS.
@@ -195,7 +195,7 @@ Expected: 3 tests PASS.
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK` with 97 tests (94 existing plus 3).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add board.py tests/test_board.py
@@ -229,7 +229,7 @@ The comment header gains optional trailers. Parsing anchors on the timestamp, so
   - `_append_comment_locked(path: str, comment: Comment) -> int` — validates `re` against the file, appends, returns the new message number. Caller holds the lock.
   - `add_comment(root, tid, body, by, to=None, ask=False, refs=None, commit=None) -> int` — returns the new message number.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_board.py`:
 
@@ -380,12 +380,12 @@ class TestMessageTrailers(unittest.TestCase):
         self.assertTrue(c.ask)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python3.14 -m unittest tests.test_board.TestMessageTrailers -v 2>&1 | tail -30`
 Expected: most FAIL or ERROR. The first two parsing tests and `test_a_line_that_only_looks_like_a_header_is_body` may pass or fail depending on the old regex; that is fine.
 
-- [ ] **Step 3: Extend `Comment` and anchor the regex**
+- [x] **Step 3: Extend `Comment` and anchor the regex**
 
 At the top of `board.py`, replace `COMMENT_RE` and the `Comment` dataclass:
 
@@ -409,7 +409,7 @@ class Comment:
     commit: str | None = None
 ```
 
-- [ ] **Step 4: Parse and render trailers**
+- [x] **Step 4: Parse and render trailers**
 
 Directly under the `Ticket` dataclass, add:
 
@@ -505,7 +505,7 @@ In `render_ticket`, replace the comment loop:
         text += "\n%s\n%s\n" % (render_comment_header(c), c.body.strip())
 ```
 
-- [ ] **Step 5: Add `sanitize_name` and `neutralise_body`**
+- [x] **Step 5: Add `sanitize_name` and `neutralise_body`**
 
 Directly after `sanitize_scalar`:
 
@@ -525,7 +525,7 @@ def neutralise_body(body: str) -> str:
                      for line in body.split("\n"))
 ```
 
-- [ ] **Step 6: Rewrite `add_comment` around a locked helper with one write loop**
+- [x] **Step 6: Rewrite `add_comment` around a locked helper with one write loop**
 
 Replace `add_comment`:
 
@@ -593,7 +593,7 @@ def add_comment(root: str, tid: str, body: str, by: str, to: str | None = None,
         return _append_comment_locked(path, comment)
 ```
 
-- [ ] **Step 7: Run the new tests and the whole suite**
+- [x] **Step 7: Run the new tests and the whole suite**
 
 Run: `python3.14 -m unittest tests.test_board.TestMessageTrailers -v 2>&1 | tail -25`
 Expected: 17 tests PASS.
@@ -601,7 +601,7 @@ Expected: 17 tests PASS.
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK`. If `TestParsing.test_round_trip_is_stable` fails, the renderer and parser disagree on a default; fix the renderer, never the test.
 
-- [ ] **Step 8: Correct the spec's neutralising sentence**
+- [x] **Step 8: Correct the spec's neutralising sentence**
 
 In `docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`, find the paragraph beginning `**Body lines that look like a header are neutralised on write.**` and replace it so it reads:
 
@@ -615,7 +615,7 @@ this is in scope. Existing files are not rewritten; ticket 001 on this repo's
 board tracks the residue.
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add board.py tests/test_board.py docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md
@@ -648,7 +648,7 @@ A thread is a ticket-shaped file under `.agent-board/threads/`. It shares the al
   - `find_ticket` returns `(THREADS_DIR, path)` for a thread.
   - `ticket_to_dict` adds `kind` (`"ticket"` or `"thread"`) and `n` on each comment.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_board.py`:
 
@@ -769,12 +769,12 @@ class TestThreads(unittest.TestCase):
         self.assertEqual(len(set(ids)), 8, ids)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python3.14 -m unittest tests.test_board.TestThreads -v 2>&1 | tail -20`
 Expected: ERROR on `board.THREADS_DIR` and `board.create_thread` not existing.
 
-- [ ] **Step 3: Add the constant, the `ticket` field, and parse/render it**
+- [x] **Step 3: Add the constant, the `ticket` field, and parse/render it**
 
 Near `COLUMNS` at the top of `board.py`:
 
@@ -809,7 +809,7 @@ def is_thread(column: str) -> bool:
     return column == THREADS_DIR
 ```
 
-- [ ] **Step 4: Teach init, the scan, and lookup about `threads/`**
+- [x] **Step 4: Teach init, the scan, and lookup about `threads/`**
 
 In `init_board`, after the loop that creates the columns:
 
@@ -833,7 +833,7 @@ In `find_ticket`, change the loop header `for col in COLUMNS:` to:
     for col in COLUMNS + (THREADS_DIR,):
 ```
 
-- [ ] **Step 5: Thread creation through the same locked allocator**
+- [x] **Step 5: Thread creation through the same locked allocator**
 
 Change `_create_locked`'s signature and the `Ticket(...)` construction inside it:
 
@@ -877,7 +877,7 @@ def list_threads(root: str) -> list[Ticket]:
     return rows
 ```
 
-- [ ] **Step 6: Refuse a thread inside the shared mutators**
+- [x] **Step 6: Refuse a thread inside the shared mutators**
 
 Add after `is_thread`:
 
@@ -908,7 +908,7 @@ In `set_owner`, the line `_, path = find_ticket(root, tid)` becomes:
         _refuse_thread(col, tid, "assigned")
 ```
 
-- [ ] **Step 7: `ticket_to_dict` gains `kind` and message numbers**
+- [x] **Step 7: `ticket_to_dict` gains `kind` and message numbers**
 
 Replace `ticket_to_dict`:
 
@@ -922,7 +922,7 @@ def ticket_to_dict(column: str, t: Ticket) -> dict:
     return data
 ```
 
-- [ ] **Step 8: Run the new tests and the whole suite**
+- [x] **Step 8: Run the new tests and the whole suite**
 
 Run: `python3.14 -m unittest tests.test_board.TestThreads -v 2>&1 | tail -20`
 Expected: 12 tests PASS.
@@ -930,7 +930,7 @@ Expected: 12 tests PASS.
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add board.py tests/test_board.py
@@ -961,7 +961,7 @@ The inbox rule as one function, the inbox query over tickets and threads, `show 
   - `inbox_rows(root, name: str | None = None) -> list[dict]` — takes the lock. Row keys: `id, kind, column, title, n, by, to, at, commit, summary, state, asked`. `state` is `"awaiting"` or `"answered"`; `asked` is the asker's message number on answered rows and `None` otherwise. Answered rows appear only when a name is given.
   - CLI: `thread`, `threads`, `inbox`, `comment` flags, `show --last`, `--body-file`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_board.py`:
 
@@ -1186,12 +1186,12 @@ class TestConversationCLI(unittest.TestCase):
         self.assertIn("thread", err.getvalue())
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python3.14 -m unittest tests.test_board.TestPending tests.test_board.TestConversationCLI -v 2>&1 | tail -25`
 Expected: ERROR on `board.pending_asks` and `board.inbox_rows`; the CLI tests fail with argparse errors on unknown commands.
 
-- [ ] **Step 3: The query section**
+- [x] **Step 3: The query section**
 
 Add after `watch_once` in `board.py`:
 
@@ -1313,7 +1313,7 @@ def _print_threads(rows: list[Ticket]) -> None:
                  ("%d pending" % pend) if pend else "-", when))
 ```
 
-- [ ] **Step 4: CLI helpers for bodies and `re`**
+- [x] **Step 4: CLI helpers for bodies and `re`**
 
 Add before `main`:
 
@@ -1352,7 +1352,7 @@ Add `replace` to the dataclasses import at the top of the file:
 from dataclasses import asdict, dataclass, field, replace
 ```
 
-- [ ] **Step 5: Parsers**
+- [x] **Step 5: Parsers**
 
 In `main`, replace the `show` and `comment` parsers and add three new ones. The final parser block for these five commands:
 
@@ -1392,7 +1392,7 @@ In `main`, replace the `show` and `comment` parsers and add three new ones. The 
     p.add_argument("--json", action="store_true")
 ```
 
-- [ ] **Step 6: Dispatch**
+- [x] **Step 6: Dispatch**
 
 In `main`'s `try:` block, replace the `show` and `comment` branches and add the new ones:
 
@@ -1446,7 +1446,7 @@ In `main`'s `try:` block, replace the `show` and `comment` branches and add the 
 
 The existing `except (KeyError, ValueError, RuntimeError, OSError)` at the end of the block already turns every refusal into `error: ...` on stderr and exit code 2.
 
-- [ ] **Step 7: Run the new tests and the whole suite**
+- [x] **Step 7: Run the new tests and the whole suite**
 
 Run: `python3.14 -m unittest tests.test_board.TestPending tests.test_board.TestConversationCLI -v 2>&1 | tail -25`
 Expected: 20 tests PASS.
@@ -1454,7 +1454,7 @@ Expected: 20 tests PASS.
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK`.
 
-- [ ] **Step 8: Try it by hand, once**
+- [x] **Step 8: Try it by hand, once**
 
 ```bash
 cd "$(mktemp -d)" && python3.14 /Users/jimmy/Source/bronhills/agent-board/board.py init --no-agents
@@ -1470,7 +1470,7 @@ $B show 1 --last 1
 
 Expected: `inbox codex` shows message 1, then nothing pending; `inbox claude` shows message 2; `threads` shows `1 pending`; `show --last 1` says `1 earlier message omitted; showing 2-2 of 2`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add board.py tests/test_board.py
@@ -1496,7 +1496,7 @@ The page grows a threads section, message badges, a waiting strip listing every 
 - Consumes: `_all_items`, `pending_asks`, `_first_line`, `create_thread`, `add_comment`, `_parse_refs`, `board_lock`, `is_thread`, `THREADS_DIR`.
 - Produces: HTML only. POST `/thread` with fields `title, body, by, to, ask, commit`. POST `/comment` accepts `to, ask, re, commit` in addition to `id, body, by`. Cards carry `id="card-<id>"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `TestRefreshAndPort.test_reload_skips_when_a_field_has_text_but_no_focus`, change the assertion `self.assertIn("value.trim()", page)` to:
 
@@ -1608,12 +1608,12 @@ class TestConversationUI(unittest.TestCase):
         self.assertEqual(after, board.render_board_html(self.root))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python3.14 -m unittest tests.test_board.TestConversationUI tests.test_board.TestRefreshAndPort -v 2>&1 | tail -20`
 Expected: the new tests FAIL on missing markup and a 404 from `/thread`; the refresh test FAILS on `defaultValue`.
 
-- [ ] **Step 3: CSS**
+- [x] **Step 3: CSS**
 
 Append to `PAGE_CSS` (inside the triple-quoted string, before the closing `"""`):
 
@@ -1643,7 +1643,7 @@ label.ask input{flex:0 0 auto;min-width:0}
 .add .row input{margin-bottom:0}
 ```
 
-- [ ] **Step 4: Shared comment rendering and the two forms**
+- [x] **Step 4: Shared comment rendering and the two forms**
 
 Add before `_render_card`:
 
@@ -1761,7 +1761,7 @@ def _render_waiting(items: list[tuple[str, Ticket]]) -> str:
     return '<div class="wait"><h3>Waiting</h3><ul>%s</ul></div>' % lis
 ```
 
-- [ ] **Step 5: The page**
+- [x] **Step 5: The page**
 
 Replace `render_board_html`:
 
@@ -1827,7 +1827,7 @@ def render_board_html(root: str) -> str:
     )
 ```
 
-- [ ] **Step 6: POST handlers**
+- [x] **Step 6: POST handlers**
 
 In `_make_handler.do_POST`, replace the `/comment` branch and add `/thread`:
 
@@ -1850,7 +1850,7 @@ In `_make_handler.do_POST`, replace the `/comment` branch and add `/thread`:
                                       commit=(fields.get("commit") or [""])[0].strip() or None)
 ```
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `python3.14 -m unittest tests.test_board.TestConversationUI tests.test_board.TestRefreshAndPort tests.test_board.TestUIComments tests.test_board.TestWebUI -v 2>&1 | tail -30`
 Expected: all PASS.
@@ -1858,7 +1858,7 @@ Expected: all PASS.
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK`.
 
-- [ ] **Step 8: Check it in a browser. Not optional.**
+- [x] **Step 8: Check it in a browser. Not optional.**
 
 Two layout bugs shipped past a green suite because no test renders a page. Seed a board and look at it.
 
@@ -1887,7 +1887,7 @@ Open `http://127.0.0.1:8899` with the `/browse` skill (the user's standing instr
 
 Fix anything wrong, re-run the suite, and only then continue.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add board.py tests/test_board.py
@@ -1916,7 +1916,7 @@ Teach agents the new commands, tell humans what changed, and record the rulings.
 - Consumes: nothing new.
 - Produces: documentation. The agents block must keep the strings `board take` and `ask` that `TestAgentsDoc` already asserts.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `TestAgentsDoc`:
 
@@ -1931,7 +1931,7 @@ Add to `TestAgentsDoc`:
 Run: `python3.14 -m unittest tests.test_board.TestAgentsDoc -v 2>&1 | tail -5`
 Expected: the new test FAILS on `board inbox`.
 
-- [ ] **Step 2: Rewrite `agents_block`**
+- [x] **Step 2: Rewrite `agents_block`**
 
 Replace the function body's string:
 
@@ -1976,7 +1976,7 @@ content: the message is in the file.
 Run: `python3.14 -m unittest tests.test_board.TestAgentsDoc -v 2>&1 | tail -5`
 Expected: all PASS, including `test_block_is_role_neutral`.
 
-- [ ] **Step 3: README**
+- [x] **Step 3: README**
 
 In `README.md`:
 
@@ -2034,7 +2034,7 @@ longer than a paragraph.
 - [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md) — threads and the inbox
 ```
 
-- [ ] **Step 4: Decisions**
+- [x] **Step 4: Decisions**
 
 Append to `docs/decisions.md`:
 
@@ -2062,7 +2062,7 @@ against the code before building.
 | The `ticket` link on a thread stays, optional | Codex would cut it. The human named conversations about tickets as a real case, and it is one field shown as text. |
 ```
 
-- [ ] **Step 5: This repo's own AGENTS.md**
+- [x] **Step 5: This repo's own AGENTS.md**
 
 In `AGENTS.md` at the repo root, after the `## Design` list, add the new spec and plan:
 
@@ -2073,11 +2073,11 @@ In `AGENTS.md` at the repo root, after the `## Design` list, add the new spec an
 
 And in the `## Before proposing any feature` paragraph, extend the list of rejected things: after `presence indicators`, add `, message types, thread status, a per-name inbox filter`.
 
-- [ ] **Step 6: Retake the screenshot**
+- [x] **Step 6: Retake the screenshot**
 
 With the seeded board from Task 5 Step 8 still served, capture the page at about 1280 px wide showing the waiting strip, the columns, and the threads section, and save it over `docs/board-ui.png`. Use the `/browse` skill's screenshot. Check the README renders it.
 
-- [ ] **Step 7: Run everything one last time**
+- [x] **Step 7: Run everything one last time**
 
 Run: `python3.14 -m unittest discover -s tests -v 2>&1 | tail -5`
 Expected: `OK`.
@@ -2085,7 +2085,7 @@ Expected: `OK`.
 Run: `git status --short`
 Expected: only the files this task touched.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add board.py tests/test_board.py README.md docs/decisions.md AGENTS.md docs/board-ui.png
@@ -2117,3 +2117,43 @@ decisions.md records the twelve rulings from the design and the review."
 **Deviation from the spec, recorded.** Neutralising uses a leading backslash, not a leading space; Task 2 Step 8 corrects the spec sentence. Reason in Task 2 Step 5.
 
 **Type consistency.** `add_comment(..., refs=...)` everywhere, never `re=` as a parameter; the `Comment` field is `re`. `_create_locked` returns `(tid, path)` in Tasks 1 and 3. `pending_asks` returns `list[tuple[int, Comment]]` and is consumed as such in Tasks 4 and 5. `inbox_rows` row keys match between Task 4's function and its test. `THREADS_DIR` is the column value `find_ticket` returns for a thread and `ticket_to_dict` maps to `kind == "thread"`.
+
+
+## Execution record — 2026-09-05
+
+Recovered from Claude session `dec08a5d-e7d7-42de-b736-674806da96cb` at commit
+`487395e`; the implementation had not started. Implemented all six tasks on
+`feat/threads-and-inbox`, with failing tests before the corresponding behavior.
+
+Corrections to the sample implementation while preserving the design:
+
+- Malformed first trailers retain precedence over duplicates; an empty sanitized
+  commit is rejected like an empty author or recipient.
+- A thread's opening message is written before publishing its reserved file, and
+  an optional ticket link must point to a ticket.
+- Text output labels every message with its original number. `show --last 0`
+  clearly omits all messages; negative counts are refused.
+- Browser inspection found reply forms overflowing ticket cards, a checkbox
+  overflowing the new-thread form, and page overflow at 800 pixels. Forms now wrap,
+  columns scroll inside their container, and thread cards use one column on narrow
+  screens. Pending markers remain visible inside the comment scroll area.
+- Refresh protection covers changed checkboxes and open reply forms as well as
+  edited text. Prefilled values do not stop ordinary refresh.
+- Test HTTP servers now close their listening sockets after shutdown.
+
+Validation:
+
+- Full Python 3.14 unittest suite: 161 tests pass.
+- gstack browse: 1280, 800, and 375 pixel viewports have no page overflow;
+  five columns fit at 1280; narrow columns scroll within the board.
+- Browser reply cleared its ask and pending badge. A browser-created thread
+  appeared with an addressed pending ask. Waiting links target the correct card.
+- Automatic refresh works with a prefilled owner. Blurred draft text and a changed
+  checkbox each survived a refresh interval.
+- `docs/board-ui.png` retaken from the tested example board and visually inspected.
+- Existing mock-project board restarted at port 8899. Thread 004 is a real
+  conversation linked to rehearsal ticket 003, with an ask addressed to the human.
+  Existing rehearsal ticket content was preserved.
+
+The mock-project board and recovery notes remain local. No remote branch push,
+merge, deployment, or agent notification is part of this implementation.
