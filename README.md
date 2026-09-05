@@ -17,6 +17,45 @@ ln -s "$PWD/agent-board/board" ~/.local/bin/board   # or /usr/local/bin
 Nothing is ever copied into your projects. Install once; each project gets only its
 own `.agent-board/` state.
 
+## Upgrade an existing project
+
+1. Update the shared agent-board checkout on `main`:
+
+   ```bash
+   git -C /path/to/agent-board pull --ff-only
+   ```
+
+   Projects using the installed symlink get the new CLI immediately. There is
+   nothing to reinstall or copy into each project.
+
+2. Refresh each project's board and agent instructions:
+
+   ```bash
+   cd /path/to/my-project
+   board init
+   ```
+
+   Running `init` again preserves existing tickets and comments, creates any
+   missing directories such as `threads/`, and refreshes the board sections in
+   `AGENTS.md` and `CLAUDE.md` while preserving other instructions. With shared
+   worktrees, run this in the project directory containing the shared board.
+
+3. Stop that project's running board server with **Ctrl+C**, then restart it
+   from the project directory using its existing port:
+
+   ```bash
+   board serve --port 8934              # example; keep your project's port
+   ```
+
+   Refresh the browser to see Threads and the New thread form. Ask active agents
+   to reread the updated instructions, or start a new agent session.
+
+No ticket migration is needed. Existing comments remain readable; to create an
+inbox request, post a message with `--to NAME --ask`, and answer it with `--re N`.
+Old requests written only in prose do not automatically become inbox entries.
+Importing historical `.agent-bridge` conversations is not implemented; keep those
+archives. See [Talking to each other](#talking-to-each-other) for the new commands.
+
 ## Use
 
 ```bash
