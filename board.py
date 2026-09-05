@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 COLUMNS = ("todo", "doing", "review", "blocked", "done")
+THREADS_DIR = "threads"
 FM_DELIM = "---"
 # The timestamp is the anchor. The old pattern took any non-blank token as the
 # timestamp, which read an author of "alice · <ts> · to bob" and a timestamp of
@@ -45,6 +46,7 @@ class Ticket:
     description: str = ""
     owner: str | None = None
     branch: str | None = None
+    ticket: str | None = None
     comments: list[Comment] = field(default_factory=list)
 
 
@@ -157,6 +159,7 @@ def parse_ticket(text: str) -> Ticket:
         description="\n".join(desc).strip(),
         owner=meta.get("owner") or None,
         branch=meta.get("branch") or None,
+        ticket=meta.get("ticket") or None,
         comments=comments,
     )
 
@@ -168,6 +171,8 @@ def render_ticket(t: Ticket) -> str:
     out.append("created: %s" % t.created)
     if t.branch:
         out.append("branch: %s" % t.branch)
+    if t.ticket:
+        out.append('ticket: "%s"' % t.ticket)
     out.append(FM_DELIM)
     text = "\n".join(out) + "\n\n" + t.description.strip() + "\n"
     for c in t.comments:
@@ -194,6 +199,14 @@ def validate_column(value: str) -> str:
         raise ValueError("unknown column: %r (expected one of %s)" % (value, ", ".join(COLUMNS)))
     return value
 
+
+def is_thread(column: str) -> bool:
+    return column == THREADS_DIR
+
+def _refuse_thread(column: str, tid: str, verb: str) -> None:
+    if is_thread(column):
+        raise ValueError("%s is a thread; threads have no column and no owner, so it cannot be %s"
+                         % (validate_id(tid), verb))
 
 def slugify(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -251,6 +264,7 @@ def init_board(base: str | None = None) -> str:
     root = os.path.join(base, BOARD_DIR)
     for col in COLUMNS:
         os.makedirs(os.path.join(root, col), exist_ok=True)
+    os.makedirs(os.path.join(root, THREADS_DIR), exist_ok=True)
     # Create the lock up front so it has one stable inode for the board's life,
     # and keep it out of git for boards that are committed.
     lock = os.path.join(root, LOCK_NAME)
@@ -375,10 +389,9 @@ MAX_BODY_BYTES = 1_000_000
 
 def _all_ticket_paths(root: str) -> list[str]:
     paths = list(glob.glob(os.path.join(root, "*.md")))
-    for col in COLUMNS:
-        paths.extend(glob.glob(os.path.join(root, col, "*.md")))
+    for directory in COLUMNS + (THREADS_DIR,):
+        paths.extend(glob.glob(os.path.join(root, directory, "*.md")))
     return paths
-
 
 def next_id(root: str) -> str:
     highest = 0
@@ -391,7 +404,8 @@ def next_id(root: str) -> str:
 
 
 def _create_locked(root: str, title: str, description: str, dest_dir: str,
-                   owner: str | None = None) -> tuple[str, str]:
+                   owner: str | None = None, ticket_ref: str | None = None,
+                   opening: Comment | None = None) -> tuple[str, str]:
     """Allocate an id and write a new file into dest_dir. Caller holds the board lock.
 
     The scan in next_id and the O_EXCL reservation must sit in one critical
@@ -413,7 +427,8 @@ def _create_locked(root: str, title: str, description: str, dest_dir: str,
             continue
         try:
             ticket = Ticket(id=tid, title=title, created=utc_now(),
-                            description=description, owner=owner)
+                            description=description, owner=owner, ticket=ticket_ref,
+                            comments=[opening] if opening is not None else [])
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(render_ticket(ticket))
             final_path = os.path.join(root, dest_dir, "%s-%s.md" % (tid, slugify(title)))
@@ -434,6 +449,35 @@ def create_ticket(root: str, title: str, description: str = "",
         tid, _ = _create_locked(root, title, description, column, owner)
     return tid
 
+def create_thread(root: str, title: str, body: str, by: str, to: str | None = None,
+                  ask: bool = False, commit: str | None = None,
+                  ticket: str | None = None) -> str:
+    """Start a conversation: a column-less file under threads/ whose first
+    message is the opening post. One step, because two steps to start talking
+    is the friction that stops it happening. Shares the id space with tickets
+    so `board show 12` never has to ask which kind 12 is."""
+    comment = _prepare_comment(body, by, to, ask, None, commit)
+    ticket_ref = validate_id(ticket) if ticket else None
+    with board_lock(root):
+        if ticket_ref is not None:
+            col, _ = find_ticket(root, ticket_ref)
+            if is_thread(col):
+                raise ValueError("--ticket must refer to a ticket, not a thread")
+        tid, _ = _create_locked(root, title, "", THREADS_DIR,
+                                ticket_ref=ticket_ref, opening=comment)
+    return tid
+
+
+def list_threads(root: str) -> list[Ticket]:
+    """Every thread, newest activity first. Activity is the last message's
+    time, or creation for a thread with none, which cannot happen through the
+    CLI but can through a hand-made file."""
+    rows = [load_ticket(p) for p in sorted(glob.glob(os.path.join(root, THREADS_DIR, "*.md")))]
+    rows.sort(key=lambda t: (t.comments[-1].at if t.comments else t.created, int(t.id)),
+              reverse=True)
+    return rows
+
+
 def load_ticket(path: str) -> Ticket:
     with open(path, encoding="utf-8") as fh:
         return parse_ticket(fh.read())
@@ -445,7 +489,7 @@ def find_ticket(root: str, tid: str) -> tuple[str, str]:
     sorted first and leave the other as a silent twin."""
     tid = validate_id(tid)
     found: list[tuple[str, str]] = []
-    for col in COLUMNS:
+    for col in COLUMNS + (THREADS_DIR,):
         for pattern in ("%s-*.md" % tid, "%s.md" % tid):
             for path in sorted(glob.glob(os.path.join(root, col, pattern))):
                 found.append((col, path))
@@ -469,13 +513,16 @@ def list_tickets(root: str, column: str | None = None) -> list[tuple[str, Ticket
 def ticket_to_dict(column: str, t: Ticket) -> dict:
     data = asdict(t)
     data["column"] = column
+    data["kind"] = "thread" if is_thread(column) else "ticket"
+    for n, c in enumerate(data["comments"], start=1):
+        c["n"] = n
     return data
-
 
 def _move_locked(root: str, tid: str, column: str) -> str:
     """Caller must already hold the board lock."""
     column = validate_column(column)
-    _, path = find_ticket(root, tid)
+    col, path = find_ticket(root, tid)
+    _refuse_thread(col, tid, "moved")
     dest = os.path.join(root, column, os.path.basename(path))
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     os.replace(path, dest)
@@ -500,6 +547,7 @@ def take_ticket(root: str, tid: str, owner: str, expect: str | None = None) -> s
     """
     with board_lock(root):
         col, path = find_ticket(root, tid)
+        _refuse_thread(col, tid, "taken")
         if expect is not None and col != validate_column(expect):
             raise ValueError(
                 "ticket %s is in %r, not %r — already claimed?"
@@ -519,7 +567,8 @@ def set_owner(root: str, tid: str, owner: str) -> None:
     because a path or a body read before acquiring it may already be stale.
     """
     with board_lock(root):
-        _, path = find_ticket(root, tid)
+        col, path = find_ticket(root, tid)
+        _refuse_thread(col, tid, "assigned")
         ticket = load_ticket(path)
         ticket.owner = sanitize_scalar(owner) or None
         atomic_write(path, render_ticket(ticket))

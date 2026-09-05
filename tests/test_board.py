@@ -1175,3 +1175,136 @@ class TestMessageTrailers(unittest.TestCase):
         text = SAMPLE + "\n## comment — codex · 2026-09-05T00:00:00Z · re 1,2 · ask · commit abc · to claude\nhi\n"
         c = board.parse_ticket(text).comments[-1]
         self.assertEqual((c.to, c.ask, c.re, c.commit), ("claude", True, [1, 2], "abc"))
+
+
+class TestThreads(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_init_creates_threads_dir(self):
+        self.assertTrue(os.path.isdir(os.path.join(self.root, board.THREADS_DIR)))
+
+    def test_create_thread_writes_message_one_and_shares_the_id_space(self):
+        board.create_ticket(self.root, "a ticket")
+        tid = board.create_thread(self.root, "Design A vs B", "Opening.\n\nDetails.", "claude", to="codex", ask=True, commit="abc123")
+        self.assertEqual(tid, "002")
+        col, path = board.find_ticket(self.root, tid)
+        self.assertEqual(col, board.THREADS_DIR)
+        self.assertTrue(path.endswith("002-design-a-vs-b.md"))
+        t = board.load_ticket(path)
+        self.assertEqual(t.title, "Design A vs B")
+        self.assertEqual(t.description, "")
+        self.assertEqual(len(t.comments), 1)
+        self.assertEqual(t.comments[0].body, "Opening.\n\nDetails.")
+        self.assertEqual(t.comments[0].to, "codex")
+        self.assertTrue(t.comments[0].ask)
+        self.assertIsNone(t.ticket)
+        self.assertEqual(board.create_ticket(self.root, "next ticket"), "003")
+
+    def test_thread_may_link_a_ticket(self):
+        board.create_ticket(self.root, "the work")
+        tid = board.create_thread(self.root, "about the work", "hi", "claude", ticket="1")
+        _, path = board.find_ticket(self.root, tid)
+        t = board.load_ticket(path)
+        self.assertEqual(t.ticket, "001")
+        with open(path, encoding="utf-8") as fh:
+            self.assertIn('ticket: "001"', fh.read())
+        self.assertEqual(board.parse_ticket(board.render_ticket(t)), t)
+
+    def test_thread_link_to_missing_ticket_is_refused(self):
+        with self.assertRaises(KeyError):
+            board.create_thread(self.root, "t", "hi", "claude", ticket="42")
+
+    def test_thread_opening_ask_needs_a_recipient(self):
+        with self.assertRaises(ValueError):
+            board.create_thread(self.root, "t", "hi", "claude", ask=True)
+        self.assertEqual(os.listdir(os.path.join(self.root, board.THREADS_DIR)), [])
+
+    def test_comment_on_a_thread_works(self):
+        tid = board.create_thread(self.root, "t", "hi", "claude", to="codex", ask=True)
+        n = board.add_comment(self.root, tid, "answer", "codex", refs=[1])
+        self.assertEqual(n, 2)
+
+    def test_move_take_assign_refuse_a_thread(self):
+        tid = board.create_thread(self.root, "t", "hi", "claude")
+        with self.assertRaises(ValueError):
+            board.move_ticket(self.root, tid, "review")
+        with self.assertRaises(ValueError):
+            board.take_ticket(self.root, tid, "codex")
+        with self.assertRaises(ValueError):
+            board.set_owner(self.root, tid, "codex")
+        col, path = board.find_ticket(self.root, tid)
+        self.assertEqual(col, board.THREADS_DIR)
+        self.assertIsNone(board.load_ticket(path).owner)
+        for c in board.COLUMNS:
+            self.assertEqual(os.listdir(os.path.join(self.root, c)), [], c)
+
+    def test_list_threads_newest_activity_first(self):
+        a = board.create_thread(self.root, "older", "hi", "claude")
+        b = board.create_thread(self.root, "newer", "hi", "claude")
+        # Same second is likely; force distinct activity by editing the file.
+        _, path = board.find_ticket(self.root, a)
+        t = board.load_ticket(path)
+        t.comments[0].at = "2030-01-01T00:00:00Z"
+        board.atomic_write(path, board.render_ticket(t))
+        self.assertEqual([t.id for t in board.list_threads(self.root)], [a, b])
+
+    def test_list_tickets_excludes_threads(self):
+        board.create_thread(self.root, "t", "hi", "claude")
+        self.assertEqual(board.list_tickets(self.root), [])
+
+    def test_to_dict_marks_kind_and_numbers_messages(self):
+        tid = board.create_thread(self.root, "t", "hi", "claude")
+        board.add_comment(self.root, tid, "second", "codex")
+        col, path = board.find_ticket(self.root, tid)
+        d = board.ticket_to_dict(col, board.load_ticket(path))
+        self.assertEqual(d["kind"], "thread")
+        self.assertEqual(d["column"], board.THREADS_DIR)
+        self.assertEqual([c["n"] for c in d["comments"]], [1, 2])
+        board.create_ticket(self.root, "k")
+        col, path = board.find_ticket(self.root, "2")
+        self.assertEqual(board.ticket_to_dict(col, board.load_ticket(path))["kind"], "ticket")
+
+    def test_board_without_threads_dir_still_works(self):
+        board.create_ticket(self.root, "old board")
+        os.rmdir(os.path.join(self.root, board.THREADS_DIR))
+        self.assertEqual(len(board.list_tickets(self.root)), 1)
+        self.assertEqual(board.list_threads(self.root), [])
+        board.find_ticket(self.root, "1")
+        board.render_board_html(self.root)
+        tid = board.create_thread(self.root, "first thread", "hi", "claude")
+        self.assertEqual(tid, "002")
+
+    def test_concurrent_thread_and_ticket_creation_never_share_an_id(self):
+        mod = os.path.dirname(os.path.abspath(board.__file__))
+        code = (
+            "import sys; sys.path.insert(0, %r); import board\n"
+            "i = int(sys.argv[1])\n"
+            "print(board.create_thread(%r, 'thread %%d' %% i, 'hi', 'claude') if i %% 2"
+            " else board.create_ticket(%r, 'ticket %%d' %% i))"
+        ) % (mod, self.root, self.root)
+        procs = [subprocess.Popen([sys.executable, "-c", code, str(i)],
+                                  stdout=subprocess.PIPE, text=True) for i in range(8)]
+        ids = [p.communicate()[0].strip() for p in procs]
+        self.assertEqual(len(set(ids)), 8, ids)
+
+    def test_thread_link_cannot_point_to_another_thread(self):
+        tid = board.create_thread(self.root, "first", "hello", "codex")
+        with self.assertRaises(ValueError):
+            board.create_thread(self.root, "second", "hello", "codex", ticket=tid)
+        self.assertEqual(len(board.list_threads(self.root)), 1)
+
+    def test_opening_message_is_written_before_thread_becomes_visible(self):
+        real_rename = os.rename
+        def inspect_rename(src, dest):
+            if os.path.dirname(dest) == os.path.join(self.root, board.THREADS_DIR):
+                t = board.load_ticket(src)
+                self.assertEqual(len(t.comments), 1)
+                self.assertEqual(t.comments[0].body, "opening")
+            return real_rename(src, dest)
+        with mock.patch.object(board.os, "rename", inspect_rename):
+            board.create_thread(self.root, "atomic opening", "opening", "codex")
