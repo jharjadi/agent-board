@@ -206,46 +206,33 @@ li { padding-left: .2rem; }
 
   <div class="eyebrow">
     <span>6 September 2026</span><span class="dot">/</span>
-    <span>2,030 words</span><span class="dot">/</span>
+    <span>1,712 words</span><span class="dot">/</span>
     <span>agent-board</span>
   </div>
 
-  <h1>I kept building an agent orchestrator. Then I deleted it and used a folder.</h1>
+  <h1>Your agent orchestrator is a black box. Mine is a folder.</h1>
 
-  <p class="standfirst">Twelve diverged copies of a tool whose whole job was keeping things in sync. Here is what was left after I threw it away.</p>
+  <p class="standfirst">Coordinate two coding agents with directories and markdown files. No scheduler, no registry, no tokens spent deciding who does the work.</p>
 
   <hr class="sep">
 
-  <p>For about a year I kept building the same thing and kept being wrong about it.</p>
+  <p>There is a moment with every agent orchestration framework where you look at the token bill, then at what actually got built, and cannot account for the gap.</p>
 
-  <p>The thing was a way to make two coding agents work on one codebase without stepping on each other. Claude writes the code, Codex reviews it, a human stays in the loop. That is it. That is the whole requirement.</p>
+  <p>You know the shape of it. A framework with tens of thousands of stars. A supervisor agent that decides which worker agent should act. A planner that re-plans. Some of your spend went to writing code, and some went to a model thinking about which model should think about the code, and you cannot separate the two because the interesting part happened inside a Python object that no longer exists.</p>
 
-  <p>I ended up with a system called <code>.agent-bridge</code>. Before writing this I scanned <code>~/Source</code> to get the real numbers rather than trust my memory of them. On 6 September 2026 it was installed in <strong>twelve</strong> repositories, holding <strong>176 conversations</strong> between them.</p>
+  <p>I got tired of that. Not of agents, which work fine. Of not being able to answer three questions:</p>
 
-  <p>Twelve copies, all different. The two most developed had a full tool suite:</p>
+  <ol>
+    <li>What is each agent doing right now?</li>
+    <li>Who is waiting on whom?</li>
+    <li>What did they decide, and why?</li>
+  </ol>
 
-<pre>actionable.py       bridge.py           bridge-watch.sh
-build.sh            codex-log.sh        jira.py
-prehandoff.py       review.sh           review-status.sh
-session-banner.sh</pre>
+  <p>Every framework I tried answered those with a dashboard, a trace viewer, or nothing. I wanted to answer them with <code>ls</code>.</p>
 
-  <p>The other ten had three files or fewer. I would fix a bug in one copy and never port it. I would add a feature in another and forget which repos had it. The tool for keeping agents in sync could not keep itself in sync.</p>
+  <h2>What you get</h2>
 
-  <p>One thing every single copy had, all twelve of them, was a <code>registry/</code> directory: the list of which agents existed. I will come back to that.</p>
-
-  <p>Here is the part that stung. I did not notice how bad it was, because every individual piece was reasonable. A registry is reasonable. You need to know which agents exist, right? A status field is reasonable. How else do you know if something is in review? A watcher is reasonable. Somebody has to notice when a reply lands.</p>
-
-  <p>Every one of those is a small, sensible yes. Stack enough of them and you have built an orchestrator, and now you are maintaining an orchestrator instead of shipping the thing you wanted to ship.</p>
-
-  <h2>The line that fixed it</h2>
-
-  <p>I threw it away and started from one sentence:</p>
-
-  <p class="rule-stmt">The board never knows which agents exist.</p>
-
-  <p>No registry. No presence. No heartbeats. No scheduler. If you want to know what an agent is working on, you look at which directory the file is in.</p>
-
-  <p>That is the whole design. Assignment is the column.</p>
+  <p>Here is the whole idea. Your agents coordinate through a directory:</p>
 
 <pre>.agent-board/
     todo/
@@ -258,20 +245,30 @@ session-banner.sh</pre>
     done/
     threads/</pre>
 
-  <p>Directories are columns. Each ticket is one markdown file. Moving a ticket is a rename, and the board never runs git itself; git records the move afterwards like any other file change, so history is just <code>git log</code>. There is no database, no daemon, and no state to reconcile, because the filesystem already is the state.</p>
+  <p>Columns are directories. Tickets are markdown files. An agent claims work by moving a file. That is the entire data model, and you already know how to operate it, because it is <code>ls</code>, <code>mv</code>, <code>cat</code>, <code>grep</code> and <code>git log</code>.</p>
 
-  <p>The implementation is one 1,364-line Python file with no dependencies beyond the standard library. If you have Python 3.11 or newer on macOS or Linux you can curl it into a project and it works. It uses <code>fcntl</code> for locking, so it is POSIX only.</p>
+  <p>Which means:</p>
+
+  <ul>
+    <li><strong>Coordination costs zero tokens.</strong> Nothing calls a model to decide who works next. There is no supervisor, because assignment is which folder the file is in. The only tokens you spend are the ones your agents spend doing the work.</li>
+    <li><strong>You can read all of it.</strong> Not a trace viewer. The actual conversation, in your editor, in a markdown file, right now.</li>
+    <li><strong>You can edit it.</strong> An agent misunderstood the ticket? Fix the sentence. No API, no migration, no restart. It is a text file.</li>
+    <li><strong>Nothing runs unless you run it.</strong> No daemon, no background scheduler, no process to babysit or pay for.</li>
+    <li><strong>Your reviewer's argument is a diff.</strong> When two agents disagree and one changes its mind, that is in <code>git log</code> a year later.</li>
+  </ul>
+
+  <p>And you can read the implementation. It is one Python file, 1,364 lines, standard library only. Not "small for a framework." Small enough that you could sit down and understand every line this afternoon, and then change the parts you disagree with.</p>
+
+  <p>If you have Python 3.11+ on macOS or Linux, you <code>curl</code> it into a project and it works. No npm, no build step, no dependencies. It uses <code>fcntl</code> for locking, so POSIX only.</p>
 
   <figure class="wide">
     <img src="__BOARD__" alt="The agent-board web UI: a header reading 11 tickets, 0 threads, an amber WAITING strip showing one unanswered question from claude to codex, and five columns labelled todo, doing, review, blocked and done, each holding markdown-backed ticket cards.">
-    <figcaption>The board. Five columns, eleven tickets, one unanswered question in the strip at the top.</figcaption>
+    <figcaption>The board. Five columns, one unanswered question in the strip at the top.</figcaption>
   </figure>
 
-  <p>That web UI owns nothing. It is a projection. Every button posts a normal file operation and a hard refresh rebuilds the page from disk. If the server dies, you have lost nothing, because there was nothing in it.</p>
+  <p>There is a web UI, and it owns nothing. It is a projection of the directory. Every button performs an ordinary file operation, and a hard refresh rebuilds the page from disk. Kill the server mid-sentence and you lose nothing, because there was nothing in it. Use it when you want to see the shape of things; use the CLI for everything else.</p>
 
-  <h2>The whole loop, in eight commands</h2>
-
-  <p>Before the interesting story, here is the boring one, which is what you will actually do all day.</p>
+  <h2>The whole protocol, in eight commands</h2>
 
   <p>Claude picks up a bug and hands it to Codex:</p>
 
@@ -290,42 +287,44 @@ AWAITING YOUR REPLY (1)
   001  ticket #1   claude to codex  2026-09-06 09:12:04  a1b2c3d
         Fixed in a1b2c3d. Guard clause plus a test.</pre>
 
-  <p>It reviews, answers, and closes:</p>
+  <p>It reviews, answers, closes:</p>
 
 <pre>board comment 1 "Approved. Guard is correct and the test covers zero." \
     --by codex --to claude --re 1
 board move 1 done</pre>
 
-  <p>That is the entire protocol. Two flags carry it: <code>--ask</code> says a reply is expected, <code>--re 1</code> says which message this answers. Everything else in this post is an elaboration of those two.</p>
-
-  <h2>Two agents, one real argument</h2>
-
-  <p>Now the interesting one. This is that same loop, catching a bug in the board itself.</p>
-
-  <p>I had just shipped threads and an inbox. 161 tests green. I asked Codex to review the diff. It came back with this:</p>
-
-  <blockquote>
-    <p><strong>[P2] Normalize carriage returns before neutralising message bodies.</strong> board.py:233-234. If a positional CLI body or POST body contains a bare CR before a header-shaped example, this scan misses it because it splits only on newline. <code>load_ticket()</code> subsequently normalizes carriage returns into newlines, turning the example into a real message.</p>
-  </blockquote>
-
-  <p>Some background on why that matters. A message on a board looks like this:</p>
-
-  <div class="msghdr">
-    ## comment — codex <span class="sep2">·</span> 2026-09-05T23:30:01Z <span class="sep2">·</span> <span class="badge">to claude</span> <span class="sep2">·</span> <span class="badge ask">ask</span> <span class="sep2">·</span> <span class="badge">commit cba4c2a</span>
-    <span class="body">[P2] Normalize carriage returns before neutralising message bodies.</span>
-  </div>
-
-  <p>The header carries four optional trailers: <code>to</code>, <code>ask</code>, <code>re</code>, <code>commit</code>. And there is exactly one rule that makes the inbox work:</p>
+  <p>That is it. Two flags carry the entire protocol. <code>--ask</code> says a reply is expected. <code>--re 1</code> says which message this answers. There is no message type, no status field, no state machine. One rule decides everything:</p>
 
   <p class="rule-stmt">An addressed message carrying <code>ask</code> is pending until a later message in the same file lists its number in <code>re</code>.</p>
 
-  <p>Not "who spoke last". Not a status field. A plain message is never pending at all. Only an ask is, and only until something answers it.</p>
+  <p>Not "who spoke last." A plain message is never pending at all. Only an ask is, and only until something answers it.</p>
 
-  <p>So if a message body could smuggle in a fake header, an attacker, or an honest agent pasting the wrong thing, could forge a message that says <code>re 1</code> and make a real request look answered. I had already escaped that. Any body line shaped like a header gets a backslash in front of it.</p>
+  <p>Everything else in this post is that rule doing its job.</p>
 
-  <p>Codex found the hole: the escape split the body on newlines, but ticket files are read in text mode, where Python turns a bare carriage return into a newline <strong>after</strong> the escape has already run. So a <code>\r</code> walks straight past the guard and becomes a line break on the next read.</p>
+  <h2>The screen you will actually live in</h2>
 
-  <p>I reproduced it in about two minutes:</p>
+  <figure>
+    <img src="__WAIT__" alt="A narrow amber strip labelled WAITING, listing a single entry: ticket 001, message 1, from claude to codex, asking whether ticket 001 closes now or whether ticket 011 replaces it.">
+    <figcaption>Every unanswered ask on the board, in one strip.</figcaption>
+  </figure>
+
+  <p>Every unanswered question on the board, across every ticket, in one strip. No unread badges, no per-agent filter, no notification service. If a question is open, it is there until something answers it. <code>board inbox</code> prints the same thing in your terminal.</p>
+
+  <p>The first time you run it and it says <code>(nothing pending)</code>, that is not a guess about the conversation. It is a fact about the files.</p>
+
+  <h2>What this buys you, concretely</h2>
+
+  <p>Last week the board caught a bug in itself, and the way it happened is the best argument I have for working this way.</p>
+
+  <p>I shipped a feature. 161 tests green. I asked Codex to review the diff, and it filed this:</p>
+
+  <blockquote>
+    <p>[P2] Normalize carriage returns before neutralising message bodies. If a body contains a bare CR before a header-shaped example, this scan misses it because it splits only on newline. <code>load_ticket()</code> subsequently normalizes carriage returns into newlines, turning the example into a real message.</p>
+  </blockquote>
+
+  <p>Messages are markdown, and a message body could contain something that looks like a message header. If it did, it would parse as a real message, and a forged <code>re</code> could mark a real question as answered. I had escaped that. Codex found the gap: files are read in text mode, where Python turns a bare <code>\r</code> into a newline <em>after</em> my escaping ran.</p>
+
+  <p>Two minutes to reproduce:</p>
 
 <pre>after real ask  -&gt; messages=1  pending_asks=1
 after CR body   -&gt; messages=3  pending_asks=0
@@ -333,58 +332,26 @@ after CR body   -&gt; messages=3  pending_asks=0
     #2 by='mallory' re=[]   ask=False  to=None
     #3 by='codex'   re=[1]  ask=False  to='claude'</pre>
 
-  <p>Message #3 is attributed to an agent that never wrote it, and it silently cleared a pending request. One pending ask became zero.</p>
+  <p>Message #3 is attributed to an agent that never wrote it, and it silently cleared a real request.</p>
 
-  <p>The conversation that followed used exactly the loop above. I filed it, Codex asked, I answered with <code>--re</code> and asked back:</p>
-
-<pre>board comment 011 "Confirmed and fixed in 98f93e0, but I think you rated it
-too low..." --by claude --to codex --re 1 --ask --commit 98f93e0</pre>
-
-  <p><code>--re 1</code> discharges Codex's request. <code>--ask</code> opens a new one. Both in the same message, which is what "changes requested" actually is.</p>
-
-  <p>Codex moved it to P1:</p>
-
-  <blockquote>
-    <p>Move to <strong>P1</strong>. The trigger is narrow, but the result silently corrupts the feature's sole source of truth: a pending ask becomes answered by a message its attributed author never wrote. That makes the inbox unsafe to trust and blocks shipping.</p>
-  </blockquote>
-
-  <p>And then it caught me overstating something, which I did not enjoy and which is the best argument for this whole setup:</p>
+  <p>Here is the part that matters to you. That argument did not happen in a chat window that I would close and lose. It happened on the board, so I still have it. I pushed back on the severity, Codex moved it to P1, and then it caught me overstating my own fix:</p>
 
   <blockquote>
     <p>The named test only exercises bare CR around a forged header. It does <strong>not</strong> itself cover CRLF, ordinary LF, or a trailing CR as claimed.</p>
   </blockquote>
 
-  <p>It was right. I had claimed the regression test covered four cases. Four cases were in the throwaway script I used to reproduce the bug. The committed test had one. The green suite did not catch that. Codex did, by reading what I wrote against what I committed.</p>
+  <p>It was right. I had claimed four cases; the committed test had one. The green suite did not catch that. My reviewer did, by reading what I wrote against what I committed, and I can still pull up the exact exchange because it is a markdown file in git.</p>
 
-  <p>I widened the test to 164, replied with <code>--re</code>, and the inbox went quiet:</p>
+  <p>That is the thing the dashboards never gave me. Not observability. Custody.</p>
 
-<pre>$ board inbox
-(nothing pending)</pre>
+  <h2>What you are not paying for</h2>
 
-  <p>"Nothing pending" is a fact about the files, not a guess about the conversation.</p>
-
-  <h2>The waiting strip</h2>
-
-  <p>The one screen I actually look at:</p>
-
-  <figure>
-    <img src="__WAIT__" alt="A narrow amber strip labelled WAITING, listing a single entry: ticket 001, message 1, from claude to codex, asking whether ticket 001 closes now or whether ticket 011 replaces it.">
-    <figcaption>Every unanswered ask on the board, in one strip.</figcaption>
-  </figure>
-
-  <p>Every unanswered ask, across every ticket and thread. No per-agent filter, no unread counts, no notification system. If a question is open, it is on that strip until something answers it.</p>
-
-  <p>There is no notifier, by the way. The board never tells anyone anything. If you post a question and you know where the other agent is running, you nudge it yourself. The nudge carries no content, because the message is already in the file. That one choice deleted an entire subsystem from the old bridge.</p>
-
-  <h2>The receipts</h2>
-
-  <p>The reason this stayed small is not discipline. It is that I wrote down every feature I refused to build, and why, in a file called <code>decisions.md</code>. Condensed from that table:</p>
+  <p>The reason this stays small is that every feature I refused to build is written down, with the reason. Condensed from <code>decisions.md</code>:</p>
 
   <div class="tablewrap">
     <table>
       <thead><tr><th>Rejected</th><th>Why</th></tr></thead>
       <tbody>
-        <tr><td>Copying a folder into each project</td><td>The predecessor was copied into many repos and diverged.</td></tr>
         <tr><td>An agent registry</td><td>Roster state goes stale. A crashed agent stays registered forever. You never need to know who exists, only what is unclaimed.</td></tr>
         <tr><td>A scheduler</td><td>Assignment is the column, or a human. An LLM scheduler is the main reason multi-agent boards get expensive.</td></tr>
         <tr><td>Leases / claim expiry</td><td>A human is in the loop and notices a stuck ticket.</td></tr>
@@ -396,29 +363,32 @@ too low..." --by claude --to codex --re 1 --ask --commit 98f93e0</pre>
     </table>
   </div>
 
-  <p>The first four rows are not hypothetical. The old bridge had a registry in all twelve copies, a status field on every thread, JSON messages, and a copied folder per project. Every one of those was a small sensible yes at the time.</p>
+  <p>These are not hypotheticals. This replaced a homegrown system of mine called <code>.agent-bridge</code>, and before writing this I scanned <code>~/Source</code> rather than trust my memory: on 6 September 2026 it was installed in <strong>twelve</strong> repositories holding <strong>176 conversations</strong>, and every single copy had a <code>registry/</code> directory.</p>
 
-  <p>The registry went stale, because nothing removes a crashed agent from a list. The status field drifted from the directory, because two places can disagree. The JSON messages conflicted in git on every concurrent write. The copied folder is why there were twelve versions instead of one.</p>
+  <p>The registry went stale, because nothing removes a crashed agent from a list. The status field drifted from the directory, because two places can disagree. The JSON messages conflicted in git on every concurrent write. And because the whole thing was copied per project, there were twelve versions of it, ten of which had fallen behind the two I actually maintained.</p>
 
-  <p>I do not have receipts for what a scheduler or leases would have cost me, because I never built those. They are on the list because they are the next four small sensible yeses, and I would like to still be able to explain this tool in one sentence a year from now.</p>
+  <p>Every one of those was a small, sensible yes at the time. That is how this happens. Nobody sets out to build an orchestrator. You add a registry because you need to know which agents exist, and eleven yeses later you are maintaining infrastructure instead of shipping.</p>
 
-  <h2>What I would tell you if you are starting</h2>
+  <h2>Start here</h2>
 
-  <p>Do not start with the orchestrator. Start with the smallest thing that makes the work visible to the next agent, and only add machinery when the absence of it actually bites you.</p>
+<pre>curl -O https://raw.githubusercontent.com/jharjadi/agent-board/main/board.py
+python3 board.py init</pre>
 
-  <p>Concretely, the three things that carried all the weight:</p>
+  <p><code>init</code> writes a block into your <code>AGENTS.md</code> and <code>CLAUDE.md</code> telling your agents the commands. They pick it up on their next run. Then give one agent a ticket and tell the other to check <code>board inbox</code>.</p>
+
+  <p>Three things to hold onto, whether or not you use this:</p>
 
   <ol>
-    <li><strong>Assignment is location.</strong> A ticket in <code>review/</code> is in review. There is no second place that can disagree with the first.</li>
-    <li><strong>One rule for "is this answered".</strong> Not who spoke last, not a flag someone has to remember to set. A later message points at an earlier one, or it does not.</li>
-    <li><strong>Plain text in git.</strong> When Codex and I disagreed about severity, that argument is a diff. I can <code>git log</code> it in a year. In the bridge those arguments lived in JSON blobs I stopped being able to read, and losing them is a large part of why I rebuilt the thing so many times.</li>
+    <li><strong>Assignment should be location.</strong> A ticket in <code>review/</code> is in review. Two places that can disagree will eventually disagree.</li>
+    <li><strong>Have exactly one rule for "is this answered."</strong> Not who spoke last, not a flag someone remembers to set.</li>
+    <li><strong>Keep it in plain text, in git.</strong> The argument where your reviewer changed its mind is worth more in six months than the code it was about.</li>
   </ol>
 
-  <p>The tool is one Python file. It has no dependencies, no server you have to keep alive, and no concept of who you are. It is coordinating real work on a client project now, and the most interesting thing it has done so far is help me find a bug in itself.</p>
+  <p>The tool is one Python file with no dependencies, no server to keep alive, and no idea who you are. It is coordinating real work on a client project now, and the most interesting thing it has done so far is help me find a bug in itself.</p>
 
-  <p>That is the bar. Not "can it orchestrate". Can it get out of the way.</p>
+  <p>That is the bar I would hold any of these to. Not "can it orchestrate." Can it get out of the way.</p>
 
-  <p class="endnote">The board is at <a href="https://github.com/jharjadi/agent-board">github.com/jharjadi/agent-board</a>. Every command, transcript and screenshot above is from the real board. The bug is ticket 011; the fix is commit <code>98f93e0</code> and the widened test is <code>197cc83</code>. Codex reviewed this post before it went up, on the board, and found seven things wrong with it.</p>
+  <p class="endnote"><a href="https://github.com/jharjadi/agent-board">github.com/jharjadi/agent-board</a>, MIT. Every command and transcript above is from the real board. The bug is ticket 011; the fix is commit <code>98f93e0</code>. Codex reviewed this post before it went up, on the board, and found eight things wrong with it.</p>
 
 </article>
 """
