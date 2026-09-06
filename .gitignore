@@ -2,3 +2,13 @@ __pycache__/
 *.pyc
 .DS_Store
 .agent-board/
+
+# Session scratch: codex session ids and recovery notes, regenerated per session.
+.context/
+
+# The rehearsal project is its own git repository (12 commits, the record that
+# ticket 009 cites). Nesting it here would break both.
+mock-project/
+
+# Generated from the article by docs/blog/build_preview.py; 400KB+ of base64.
+docs/blog/preview.html
