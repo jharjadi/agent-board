@@ -1536,9 +1536,15 @@ class TestAgentRoster(unittest.TestCase):
         with self.assertRaises(ValueError):
             board.roster_add(self.root, "Doe, John", "engineer")
 
-    def test_a_hand_written_comma_name_is_skipped_on_read(self):
+    def test_a_hand_written_comma_name_is_skipped_with_a_warning(self):
+        """Skipping silently would leave the human believing that agent is
+        declared, which is the quiet lie the board exists to avoid."""
         self.write("Doe, John\tengineer\ncodex\treviewer\n")
-        self.assertEqual(board.read_roster(self.root), [("codex", "reviewer")])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(board.read_roster(self.root), [("codex", "reviewer")])
+        self.assertIn("line 1 skipped", err.getvalue())
+        self.assertIn("comma", err.getvalue())
 
     def test_a_leading_hash_is_refused_because_it_reads_back_as_a_comment(self):
         with self.assertRaises(ValueError):
@@ -1601,8 +1607,10 @@ class TestAgentRoster(unittest.TestCase):
 
     def test_the_block_carries_the_prohibition_and_the_command(self):
         block = board.agents_block()
-        self.assertIn("Do not start other agents", block)
         self.assertIn("board agent list", block)
+        # exactly once: a cherry-pick once produced two paragraphs, and an
+        # assertIn cannot tell one from two.
+        self.assertEqual(block.count("Do not start other agents"), 1)
 
     def test_the_block_is_identical_whatever_the_roster_holds(self):
         empty = board.agents_block()

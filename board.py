@@ -361,7 +361,12 @@ def read_roster(root: str) -> list[tuple[str, str]]:
         raw_name, _, raw_role = line.partition("\t")
         try:
             name = check_roster_name(raw_name)
-        except ValueError:
+        except ValueError as exc:
+            # A hand edit can write a name the CLI would have refused. Skipping
+            # it silently would leave the human believing an agent is declared,
+            # which is the same class of quiet lie the board exists to avoid.
+            print("warning: %s line %d skipped: %s" % (roster_path(root), lineno, exc),
+                  file=sys.stderr)
             continue
         if name.lower() in seen:
             raise ValueError(
@@ -445,11 +450,6 @@ conversations that are not about a ticket.
 human, and one is probably already running. Never run `claude`, `codex`, or a
 spawn/subagent tool yourself. If a task needs an agent that `board agent list`
 does not show, put a ticket in `todo/` describing it and say so in your reply.
-
-**Do not start other agents.** The agents on this project are started by the
-human, and one is probably already running. Never run `claude`, `codex`, or a
-spawn/subagent tool yourself. If a task needs an agent that is not already
-working here, put a ticket in `todo/` describing it and say so in your reply.
 
 Use your own name or role as `<you>`, whatever the user calls you, and use it
 consistently. If the user has not told you which column is yours, ask, or take
