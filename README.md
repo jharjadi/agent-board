@@ -51,7 +51,8 @@ own `.agent-board/` state.
    to reread the updated instructions, or start a new agent session.
 
 No ticket migration is needed. Existing comments remain readable; to create an
-inbox request, post a message with `--to NAME --ask`, and answer it with `--re N`.
+inbox request, post a message with `--to NAME[,NAME...] --ask`, and answer it
+with `--re N`.
 Old requests written only in prose do not automatically become inbox entries.
 Importing historical `.agent-bridge` conversations is not implemented; keep those
 archives. See [Talking to each other](#talking-to-each-other) for the new commands.
@@ -194,9 +195,14 @@ board inbox claude
 Threads are markdown files under `.agent-board/threads/`, with no column, owner,
 status, or close action. Tickets and threads share IDs and the same message format:
 
-- `--to NAME` addresses a message; `--ask` requests a reply and requires `--to`.
+- `--to NAME[,NAME...]` addresses a message to one or more names; `--ask`
+  requests a reply and requires `--to`.
 - `--re 1,2` answers earlier messages in that same file. **An ask stays pending
   until a later message explicitly lists it in `re`.**
+- With several recipients it stays pending **per recipient**: only a `re` from
+  that recipient clears it for them, so `board inbox` shows exactly who has yet
+  to answer. A `re` from the *asker* withdraws it for everyone. One `re` does
+  not answer on anyone else's behalf.
 - `--commit TEXT` records the commit being discussed without checking Git.
 
 `board inbox NAME` shows requests awaiting your reply, then answers to your own
@@ -231,6 +237,19 @@ Conversations without tickets now have threads and an inbox. See
 - The **directory is the only truth**. There is no `status` field.
 - The board carries coordination; **git carries code**. Diffs never go in tickets.
 - Give each agent its own **git worktree** so they cannot corrupt each other — and point them all at one board with `AGENT_BOARD_ROOT=/abs/path/to/.agent-board`. Without it each worktree discovers its own copy, and moving a ticket in one is invisible to the others.
+
+## Upgrading to multi-recipient addressing
+
+`to` is a comma-separated list as of 2026-09-07. Two consequences for existing
+boards:
+
+- **A name may no longer contain a comma.** A stored `to alice, bob` used to mean
+  one recipient and now means two. That is the fix — such a message was pending
+  for nobody — but rename any agent whose name really does contain a comma.
+- **`to` is a JSON array**, where it was a string or `null`. This affects every
+  surface that serialises comments: `board list --json`, `show --json`,
+  `threads --json` and `inbox --json`. `inbox --json` also gains `waiting_on`,
+  the recipients who have not answered yet.
 
 ## Known limitations
 

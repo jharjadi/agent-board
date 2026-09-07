@@ -1613,10 +1613,30 @@ class TestMultiRecipient(unittest.TestCase):
         self.assertEqual([(ask_n, ans_n) for ask_n, _, ans_n, _ in rows], [(2, 4), (3, 4)])
 
     def test_every_json_surface_emits_an_array(self):
+        """Four surfaces, exercised rather than assumed: list, show and threads
+        share ticket_to_dict, and inbox builds its own rows."""
         board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
         _, path = board.find_ticket(self.root, self.tid)
-        data = board.ticket_to_dict(board.THREADS_DIR, board.load_ticket(path))
-        self.assertEqual(data["comments"][1]["to"], ["claude", "codex"])
+
+        shared = board.ticket_to_dict(board.THREADS_DIR, board.load_ticket(path))
+        self.assertEqual(shared["comments"][1]["to"], ["claude", "codex"])
+        for col, t in board._all_items(self.root):
+            for c in board.ticket_to_dict(col, t)["comments"]:
+                self.assertIsInstance(c["to"], list)
+
+        rows = board.inbox_rows(self.root)
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertIsInstance(r["to"], list)
+            self.assertIsInstance(r["waiting_on"], list)
+
+    def test_an_empty_body_cannot_discharge_an_ask(self):
+        """Codex posted a blank reply through `--body-file -` with no stdin; it
+        cleared a real ask while saying nothing."""
+        board.add_comment(self.root, self.tid, "poll", "human", to="codex", ask=True)
+        with self.assertRaises(ValueError):
+            board.add_comment(self.root, self.tid, "   ", "codex", to="human", refs=[2])
+        self.assertEqual(self.numbers("codex"), [2])
 
 
 class TestConversationCLI(unittest.TestCase):

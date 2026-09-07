@@ -233,8 +233,8 @@ draft of this spec claimed the recipe breaks. It does not.
   cancelled for everyone by a `re` from the asker. Derived from the log; no stored
   state. The first draft's first-response-wins rule is rejected: it contradicted
   Goal 2 and would have broken thread 015.
-- `answered_unseen` emits one row per answering message, so a second answer arriving
-  before the asker posts is not hidden.
+- `answered_unseen` emits one row per (ask, answer-message) pair, so neither a
+  second answer to one ask nor a second ask answered by one reply is hidden.
 - Malformed recipient tokens are dropped individually rather than voiding the list,
   unlike `re`, because a voided list leaves an ask addressed to nobody.
 - No groups, no aliases, no `--to all`, no validation of names against anything.

@@ -341,6 +341,11 @@ conversations that are not about a ticket.
                                       start a conversation with another agent
     board threads                     list conversations
 
+**Do not start other agents.** The agents on this project are started by the
+human, and one is probably already running. Never run `claude`, `codex`, or a
+spawn/subagent tool yourself. If a task needs an agent that is not already
+working here, put a ticket in `todo/` describing it and say so in your reply.
+
 Use your own name or role as `<you>`, whatever the user calls you, and use it
 consistently. If the user has not told you which column is yours, ask, or take
 the top of `todo`. Read the ticket before starting, and report with
@@ -636,6 +641,9 @@ def _prepare_comment(body: str, by: str, to: str | None, ask: bool,
     by = sanitize_name(by)
     if not by:
         raise ValueError("--by must name who is writing")
+    if not body.strip():
+        raise ValueError("a message needs a body: an empty one would discharge an "
+                         "ask while saying nothing")
     recipients = parse_recipients(to)
     if to is not None and not recipients:
         raise ValueError("--to must name a recipient")
@@ -765,9 +773,10 @@ def answered_unseen(t: Ticket, name: str) -> list[tuple[int, Comment, int, Comme
     """The inbox's second question: what came back to me. An ask `name` posted
     that a later message answers with `re`, where `name` has posted nothing in
     the file after that answer. Posting anything afterwards is the
-    acknowledgement. Returns one row per answering message, (ask_n, ask,
-    answer_n, answer), because an ask may now have several recipients and
-    reporting only the latest would hide the earlier answers."""
+    acknowledgement. Returns one row per (ask, answer-message) pair, as
+    (ask_n, ask, answer_n, answer). Two answers to one ask are two rows, and one
+    reply carrying `re 2,3` is two rows sharing an answer number, so nothing
+    referenced is hidden by deduplicating on either side."""
     me = name.lower()
     last_mine = max((i for i, c in enumerate(t.comments, start=1) if c.by.lower() == me),
                     default=0)
