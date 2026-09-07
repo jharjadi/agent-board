@@ -69,8 +69,9 @@ for asking the room a single question, which is the one thing a meeting is for.
 
 ## Non-goals
 
-- **No roster, no validation.** Whether a name is "real" is out of scope and stays
-  so while the roster decision is unresolved. This spec must not depend on it.
+- **No validation of names.** Whether a name is "real" is out of scope. A roster
+  landed on 2026-09-07, but addressing stays free-form and this spec does not
+  depend on it; a warning for an undeclared recipient is still deferred.
 - **No groups, aliases, or `--to all`.** A name that expands to other names is an
   alias map, which `decisions.md` rejects.
 - **No delivery, no notification.** The board still tells nobody anything. The
@@ -252,5 +253,6 @@ draft of this spec claimed the recipe breaks. It does not.
 
 ## Open for later
 
-- Warning on a recipient that is not in the roster. Belongs with the roster
-  decision, not here, and this spec deliberately does not depend on it.
+- Warning on a recipient that is not in the roster. The roster landed on
+  2026-09-07, so this is now buildable; it stays deferred so that addressing does
+  not become dependent on a declaration.

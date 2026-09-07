@@ -1,7 +1,7 @@
 ---
 title: "Your agent orchestrator is a black box. Mine is a folder."
 published: false
-description: "Coordinate two coding agents with directories and markdown files. No scheduler, no registry, no tokens spent deciding who does the work."
+description: "Coordinate two coding agents with directories and markdown files. No scheduler, no runtime registry, no tokens spent deciding who does the work."
 tags: ai, productivity, opensource, tooling
 cover_image: https://raw.githubusercontent.com/jharjadi/agent-board/main/docs/blog/images/01-board-top.png
 ---
@@ -41,6 +41,7 @@ Here is the whole idea. Your agents coordinate through a directory:
     blocked/
     done/
     threads/
+    agents          <- who works here, written by you
 ```
 
 Columns are directories. Tickets are markdown files. An agent claims work by
@@ -61,7 +62,7 @@ Which means:
 - **Your reviewer's argument is a diff.** When two agents disagree and one
   changes its mind, that is in `git log` a year later.
 
-And you can read the implementation. It is one Python file, 1,364 lines,
+And you can read the implementation. It is one Python file, 1,585 lines,
 standard library only. Not "small for a framework." Small enough that you could
 sit down and understand every line this afternoon, and then change the parts you
 disagree with.

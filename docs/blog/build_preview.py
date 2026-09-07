@@ -1,4 +1,4 @@
-import base64, pathlib
+import base64, pathlib, re
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 IMG = REPO / "docs/blog/images"
@@ -212,7 +212,7 @@ li { padding-left: .2rem; }
 
   <h1>Your agent orchestrator is a black box. Mine is a folder.</h1>
 
-  <p class="standfirst">Coordinate two coding agents with directories and markdown files. No scheduler, no registry, no tokens spent deciding who does the work.</p>
+  <p class="standfirst">Coordinate two coding agents with directories and markdown files. No scheduler, no runtime registry, no tokens spent deciding who does the work.</p>
 
   <hr class="sep">
 
@@ -243,7 +243,8 @@ li { padding-left: .2rem; }
         011-bare-cr-bypasses-body-escaping-and-forges-messages.md
     blocked/
     done/
-    threads/</pre>
+    threads/
+    agents          &lt;- who works here, written by you</pre>
 
   <p>Columns are directories. Tickets are markdown files. An agent claims work by moving a file. That is the entire data model, and you already know how to operate it, because it is <code>ls</code>, <code>mv</code>, <code>cat</code>, <code>grep</code> and <code>git log</code>.</p>
 
@@ -257,7 +258,7 @@ li { padding-left: .2rem; }
     <li><strong>Your reviewer's argument is a diff.</strong> When two agents disagree and one changes its mind, that is in <code>git log</code> a year later.</li>
   </ul>
 
-  <p>And you can read the implementation. It is one Python file, 1,364 lines, standard library only. Not "small for a framework." Small enough that you could sit down and understand every line this afternoon, and then change the parts you disagree with.</p>
+  <p>And you can read the implementation. It is one Python file, 1,585 lines, standard library only. Not "small for a framework." Small enough that you could sit down and understand every line this afternoon, and then change the parts you disagree with.</p>
 
   <p>If you have Python 3.11+ on macOS or Linux, you <code>curl</code> it into a project and it works. No npm, no build step, no dependencies. It uses <code>fcntl</code> for locking, so POSIX only.</p>
 
@@ -295,7 +296,7 @@ board move 1 done</pre>
 
   <p>That is it. Two flags carry the entire protocol. <code>--ask</code> says a reply is expected. <code>--re 1</code> says which message this answers. There is no message type, no status field, no state machine. One rule decides everything:</p>
 
-  <p class="rule-stmt">An addressed message carrying <code>ask</code> is pending until a later message in the same file lists its number in <code>re</code>.</p>
+  <p class="rule-stmt">An addressed message carrying <code>ask</code> is pending for a recipient until a later message by that recipient lists its number in <code>re</code>.</p>
 
   <p>Not "who spoke last." A plain message is never pending at all. Only an ask is, and only until something answers it.</p>
 
@@ -352,7 +353,7 @@ after CR body   -&gt; messages=3  pending_asks=0
     <table>
       <thead><tr><th>Rejected</th><th>Why</th></tr></thead>
       <tbody>
-        <tr><td>An agent registry</td><td>Roster state goes stale. A crashed agent stays registered forever. You never need to know who exists, only what is unclaimed.</td></tr>
+        <tr><td>An agent registry that agents write to</td><td>Roster state maintained at runtime goes stale. A crashed agent stays registered forever. (A list <em>you</em> write is fine — it never claims anyone is running.)</td></tr>
         <tr><td>A scheduler</td><td>Assignment is the column, or a human. An LLM scheduler is the main reason multi-agent boards get expensive.</td></tr>
         <tr><td>Leases / claim expiry</td><td>A human is in the loop and notices a stuck ticket.</td></tr>
         <tr><td>JSON tickets</td><td><code>comments[]</code> is written concurrently. JSON arrays conflict in git every time.</td></tr>
@@ -394,5 +395,36 @@ python3 board.py init</pre>
 """
 
 HTML = HTML.replace("__BOARD__", BOARD).replace("__WAIT__", WAIT)
+
+
+def check_against_markdown() -> None:
+    """The article lives twice: as markdown to paste, and as HTML in this file.
+    That is two copies with no repair path, and it has already bitten once — the
+    markdown was corrected while this generator kept rebuilding the old claims.
+    Until the HTML is derived from the markdown, this fails loudly on drift.
+    """
+    md = (REPO / "docs/blog/2026-09-06-i-deleted-my-orchestrator.md").read_text()
+    problems = []
+
+    # Numbers stated in the prose must match between the two copies.
+    for pattern, label in [(r"one Python file, ([\d,]+) lines", "line count"),
+                           (r"(\d+) tests green", "test count")]:
+        in_md = set(re.findall(pattern, md))
+        in_html = set(re.findall(pattern, HTML))
+        if in_md != in_html:
+            problems.append("%s differs: markdown %s, html %s" % (label, in_md, in_html))
+
+    # Claims that must not survive in either copy.
+    for stale in ("no registry,", "1,364 lines",
+                  "pending until a later message in the same file"):
+        if stale in md or stale in HTML:
+            problems.append("stale claim still present: %r" % stale)
+
+    if problems:
+        raise SystemExit("preview is out of step with the markdown:\n  "
+                         + "\n  ".join(problems))
+
+
+check_against_markdown()
 OUT.write_text(HTML, encoding="utf-8")
-print(f"wrote {OUT}  ({len(HTML)/1024:.0f} KB)")
+print(f"wrote {OUT}  ({len(HTML)/1024:.0f} KB)  [checked against the markdown]")
