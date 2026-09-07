@@ -64,7 +64,8 @@ for asking the room a single question, which is the one thing a meeting is for.
 2. It is pending for each addressee separately, and clears for each as that one
    answers with `re`.
 3. Existing files and existing single-name usage parse and render unchanged.
-4. A recipient list that cannot be parsed is treated as absent, never as a name.
+4. An unusable recipient token is dropped rather than becoming a name, and never
+   voids the recipients beside it that parsed cleanly.
 
 ## Non-goals
 
@@ -74,8 +75,9 @@ for asking the room a single question, which is the one thing a meeting is for.
   alias map, which `decisions.md` rejects.
 - **No delivery, no notification.** The board still tells nobody anything. The
   poster nudges, content-free, as now.
-- **No per-recipient state.** Pendingness is computed from the message list at read
-  time. Nothing records which recipient has answered.
+- **No stored per-recipient state.** Nothing records who has answered. Per-recipient
+  pendingness is *derived* from the message log at read time, which an earlier draft
+  of this spec wrongly assumed was impossible.
 
 ## Message header
 
@@ -99,11 +101,18 @@ In `_parse_trailers`, `to` splits on `,`. Each token is stripped and sanitised w
 `sanitize_name`; empty tokens are dropped. Duplicates are removed, keeping first
 appearance, compared case-insensitively.
 
-The existing contract in that function's docstring holds unchanged: an unknown key
-is ignored, a duplicate key keeps its first value, and **a malformed known key
-counts as absent, never as something else.** So a `to` whose every token sanitises
-away yields no recipients rather than a junk name — the same treatment `re`
-already gives a non-numeric token.
+One helper, `_parse_recipients`, does this and is shared by `_parse_trailers`
+(reading files) and `_prepare_comment` (writing them), so the HTTP and CLI paths
+cannot drift. The web POST handler keeps passing one raw string through to
+`add_comment`/`create_thread`; it does not parse recipients itself.
+
+**Bad tokens are dropped individually; good ones survive.** This deliberately
+differs from `re`, where one non-numeric token discards the whole list, and the
+asymmetry is the point rather than an oversight. Discarding a whole recipient list
+leaves an `ask` addressed to nobody, which is precisely the silent defect this spec
+exists to remove. Dropping only the unusable tokens keeps the message routed to
+whoever was named legibly. The rest of the docstring contract is unchanged: an
+unknown key is ignored, and a duplicate key keeps its first value.
 
 `Comment.to` changes from `str | None` to `list[str]`, defaulting to an empty list.
 An empty list means unaddressed, replacing the current `None`.
@@ -116,25 +125,42 @@ note should say so.
 
 ## The inbox rule
 
-Unchanged in wording, narrowed only in how a recipient is matched:
+Narrowed to name the answerer, not just the message:
 
-> An addressed message carrying `ask` is pending for `name` when `name` is one of
-> its recipients and no later message in the same file lists its number in `re`.
+> An addressed message carrying `ask` is pending **for recipient `R`** when `R` is
+> one of its recipients and no later message **by `R`** lists its number in `re`.
+>
+> A later message **by the original asker** listing that number in `re` cancels the
+> ask for every recipient. That is the existing "never mind" behaviour, preserved.
 
-`pending_asks` replaces `c.to.lower() != want` with membership over the lowercased
-recipient list. With no name given it still lists every pending ask, as now.
+This needs no stored state. Today `pending_asks` computes one answered set of
+message numbers; it now computes a set of `(number, answerer)` pairs from the same
+single pass, plus the asker-cancelled numbers. Both are derived from the log every
+time it is read, so nothing can go stale and a hand-edited file still yields the
+right answer.
 
-One ask to three people is one message and one entry in each of three inboxes. It
-leaves each inbox as that recipient answers it, and a `re` from any recipient
-discharges it for **everyone**, because `re` names a message and the answered set
-is computed per message, not per recipient. That is deliberate: tracking which
-recipient still owes an answer would be per-recipient state, which is a non-goal.
-If a question genuinely needs an answer from each of three people, send three asks.
-This must be stated in the README, because it is the one place the model is not
-what a reader would guess.
+An earlier draft of this spec said a `re` from any recipient discharges the ask for
+all of them, on the grounds that per-recipient tracking would need per-recipient
+state. That was wrong twice: the state is derivable, and the rule contradicted this
+spec's own Goal 2. Thread 015 on this board is the counter-example. Under
+first-response-wins, codex's reply at 06:01:38 would have removed the question from
+claude's inbox before claude answered at 06:05:38, recreating the exact defect for
+every respondent after the first. A poll is the case where every answer matters.
 
-`answered_unseen` needs no change. It matches on `c.by` to find the asks I posted
-and never reads `to`.
+`pending_asks(t, name)` returns asks still outstanding for `name`.
+`pending_asks(t, None)` keeps an ask listed while **any** recipient remains, and
+reports which recipients those are, so the Waiting strip shows who has yet to
+answer rather than the original address list.
+
+### Several answers to one ask
+
+`answered_unseen` gains an explicit ruling, because one ask can now receive several
+replies. It currently emits only the latest answer per ask, so two answers arriving
+before the asker next posts would collapse into one row and the earlier one would
+be silently dropped — the same class of bug as the one being fixed.
+
+It therefore emits **one row per answering message**, not one per ask. Its selector
+is unchanged: asks are still found by `c.by`, and `to` is never read.
 
 ## CLI
 
@@ -149,12 +175,20 @@ Help text becomes `--to NAME[,NAME...]`. A name may contain spaces, so quoting i
 the caller's business: `--to "Andy Smith,codex"`.
 
 `--ask` continues to require at least one recipient, and now fails when every token
-sanitises away, which today produces the silent-misdelivery case.
+sanitises away. Today `--to ',,,' --ask` is accepted and stores `to = ',,,'`,
+verified on this checkout, which is the silent-misdelivery case reached without
+even a typo.
 
-`board inbox --json` emits `to` as an array. This is a breaking change for any
-consumer, including the turn-end hook recipe in
-`docs/migrating-from-agent-bridge.md`, which is documented but not shipped. The
-migration guide needs a note.
+`to` changes from scalar-or-null to an array in **every** JSON surface, not just
+`inbox --json`. `ticket_to_dict` serialises through `asdict` (`board.py:539`), so
+`show --json`, `list --json` and `threads --json` change too wherever comments
+appear. All four need documenting and testing.
+
+This is a public JSON compatibility break with no known consumer.
+`docs/migrating-from-agent-bridge.md:41` does **not** contain a hook that reads
+`to`; it says only that a future integration could query whether
+`board inbox <you> --json` is non-empty, which an array does not affect. An earlier
+draft of this spec claimed the recipe breaks. It does not.
 
 ## Web UI
 
@@ -173,8 +207,15 @@ migration guide needs a note.
 - an old file containing `to claude` is unchanged in meaning
 - **the reported case**: `to claude, codex` with a space yields two recipients, and
   `pending_asks(t, "claude")` and `pending_asks(t, "codex")` each return it
-- one ask to two recipients appears in both inboxes; a `re` from either clears it
-  from both, and that is asserted so the choice is pinned rather than incidental
+- **the 015 regression**: one ask to two recipients appears in both inboxes; a `re`
+  from the first clears it for that one only and leaves it pending for the second
+- a `re` from the original asker cancels the ask for every recipient
+- `pending_asks(t, None)` lists the ask while any recipient remains, and names only
+  the remaining ones
+- two answers to one ask before the asker posts yield two `answered_unseen` rows,
+  not one
+- `to a,,b` keeps `a` and `b`; `to ,,,` yields none, and with `--ask` is refused
+- all four JSON surfaces emit an array: `inbox`, `show`, `list`, `threads`
 - case: `to Claude,CODEX` is found by `claude` and `codex`
 - duplicates collapse: `to a,A,a` yields one recipient
 - every token sanitising away yields no recipients, and with `--ask` is refused
@@ -188,9 +229,14 @@ migration guide needs a note.
 
 - `to` is a list. A name may no longer contain a comma; existing values containing
   one change meaning, which is the fix.
-- A `re` from any recipient discharges the ask for all of them. Per-recipient
-  answer tracking is refused as per-recipient state. Send separate asks when each
-  answer matters.
+- An ask is pending per recipient, cleared by a `re` from that recipient, and
+  cancelled for everyone by a `re` from the asker. Derived from the log; no stored
+  state. The first draft's first-response-wins rule is rejected: it contradicted
+  Goal 2 and would have broken thread 015.
+- `answered_unseen` emits one row per answering message, so a second answer arriving
+  before the asker posts is not hidden.
+- Malformed recipient tokens are dropped individually rather than voiding the list,
+  unlike `re`, because a voided list leaves an ask addressed to nobody.
 - No groups, no aliases, no `--to all`, no validation of names against anything.
 - The single-name `to` in the threads-and-inbox spec is superseded.
 
