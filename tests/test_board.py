@@ -1057,7 +1057,7 @@ class TestMessageTrailers(unittest.TestCase):
         t = board.parse_ticket(SAMPLE)
         c = t.comments[0]
         self.assertEqual((c.by, c.at, c.body), ("claude", "2026-09-04T14:10:00Z", "Fixed in a1b2c3d."))
-        self.assertIsNone(c.to)
+        self.assertEqual(c.to, [])
         self.assertFalse(c.ask)
         self.assertEqual(c.re, [])
         self.assertIsNone(c.commit)
@@ -1091,7 +1091,7 @@ class TestMessageTrailers(unittest.TestCase):
     def test_unknown_trailer_is_ignored(self):
         text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z · to codex · priority high\nhi\n'
         c = board.parse_ticket(text).comments[0]
-        self.assertEqual(c.to, "codex")
+        self.assertEqual(c.to, ["codex"])
         self.assertEqual(c.body, "hi")
 
     def test_malformed_re_counts_as_absent(self):
@@ -1100,7 +1100,7 @@ class TestMessageTrailers(unittest.TestCase):
 
     def test_duplicate_trailer_keeps_the_first(self):
         text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z · to codex · to human\nhi\n'
-        self.assertEqual(board.parse_ticket(text).comments[0].to, "codex")
+        self.assertEqual(board.parse_ticket(text).comments[0].to, ["codex"])
 
     def test_a_line_that_only_looks_like_a_header_is_body(self):
         text = '---\nid: "001"\ntitle: T\ncreated: 2026-09-05T00:00:00Z\n---\n\n## comment — claude · 2026-09-05T00:00:00Z\nhi\n## comment — not a timestamp here\nstill body\n'
@@ -1115,7 +1115,7 @@ class TestMessageTrailers(unittest.TestCase):
         n2 = board.add_comment(self.root, "1", "changes requested", "codex", to="claude", ask=True, refs=[1], commit="abc123")
         self.assertEqual((n1, n2), (1, 2))
         t = self.load()
-        self.assertEqual(t.comments[0].to, "codex")
+        self.assertEqual(t.comments[0].to, ["codex"])
         self.assertTrue(t.comments[0].ask)
         self.assertEqual(t.comments[0].commit, "abc123")
         self.assertEqual(t.comments[1].re, [1])
@@ -1135,7 +1135,7 @@ class TestMessageTrailers(unittest.TestCase):
         board.add_comment(self.root, "1", "hi", "cla\nude · x", to="co·dex", commit="ab\ncd")
         c = self.load().comments[0]
         self.assertEqual(c.by, "cla ude x")
-        self.assertEqual(c.to, "codex")
+        self.assertEqual(c.to, ["codex"])
         self.assertEqual(c.commit, "ab cd")
 
     def test_empty_name_after_sanitising_is_refused(self):
@@ -1217,7 +1217,7 @@ class TestMessageTrailers(unittest.TestCase):
             board.add_comment(self.root, "1", "hi", "claude", commit=" · ")
 
     def test_malformed_first_trailer_cannot_be_replaced_by_a_duplicate(self):
-        for trailer, field, expected in [("to · to codex", "to", None),
+        for trailer, field, expected in [("to · to codex", "to", []),
                                          ("ask nope · ask", "ask", False),
                                          ("commit · commit abc", "commit", None),
                                          ("re ² · re 1", "re", [])]:
@@ -1227,7 +1227,7 @@ class TestMessageTrailers(unittest.TestCase):
     def test_re_order_is_read_independently_of_trailer_order(self):
         text = SAMPLE + "\n## comment — codex · 2026-09-05T00:00:00Z · re 1,2 · ask · commit abc · to claude\nhi\n"
         c = board.parse_ticket(text).comments[-1]
-        self.assertEqual((c.to, c.ask, c.re, c.commit), ("claude", True, [1, 2], "abc"))
+        self.assertEqual((c.to, c.ask, c.re, c.commit), (["claude"], True, [1, 2], "abc"))
 
 
 class TestThreads(unittest.TestCase):
@@ -1253,7 +1253,7 @@ class TestThreads(unittest.TestCase):
         self.assertEqual(t.description, "")
         self.assertEqual(len(t.comments), 1)
         self.assertEqual(t.comments[0].body, "Opening.\n\nDetails.")
-        self.assertEqual(t.comments[0].to, "codex")
+        self.assertEqual(t.comments[0].to, ["codex"])
         self.assertTrue(t.comments[0].ask)
         self.assertIsNone(t.ticket)
         self.assertEqual(board.create_ticket(self.root, "next ticket"), "003")
@@ -1444,8 +1444,9 @@ class TestPending(unittest.TestCase):
         self.assertEqual(board.inbox_rows(self.root, "nobody"), [])
         self.assertEqual(len(board.inbox_rows(self.root)), 2)
         for r in rows:
-            self.assertEqual(set(r), {"id", "kind", "column", "title", "n", "by", "to", "at",
-                                      "commit", "summary", "state", "asked"})
+            self.assertEqual(set(r), {"id", "kind", "column", "title", "n", "by", "to",
+                                      "waiting_on", "at", "commit", "summary", "state",
+                                      "asked"})
             self.assertEqual(r["state"], "awaiting")
 
     def test_answered_ask_is_unseen_until_the_asker_posts_again(self):
@@ -1469,6 +1470,153 @@ class TestPending(unittest.TestCase):
                          (2, 3, "codex", "approved"))
         self.assertEqual(board.inbox_rows(self.root, "codex"), [])
         self.assertEqual(board.inbox_rows(self.root), [])
+
+
+class TestMultiRecipient(unittest.TestCase):
+    """One ask, several recipients, pending for each until that one answers.
+
+    The rule is per recipient, not first-response-wins: thread 015 on this repo's
+    own board is the counter-example, where a reply from one recipient would
+    otherwise have removed the question from the other's inbox before it answered.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name)
+        self.tid = board.create_thread(self.root, "t", "opening", "human")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def thread(self):
+        _, path = board.find_ticket(self.root, self.tid)
+        return board.load_ticket(path)
+
+    def numbers(self, name=None):
+        return [n for n, _ in board.pending_asks(self.thread(), name)]
+
+    # Parsing and rendering
+
+    def test_single_name_parses_to_a_one_element_list(self):
+        board.add_comment(self.root, self.tid, "x", "human", to="codex", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["codex"])
+
+    def test_absent_to_is_an_empty_list(self):
+        board.add_comment(self.root, self.tid, "x", "human")
+        self.assertEqual(self.thread().comments[1].to, [])
+
+    def test_several_names_parse_in_order(self):
+        board.add_comment(self.root, self.tid, "x", "human", to="claude,codex,andy", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["claude", "codex", "andy"])
+
+    def test_header_round_trips(self):
+        board.add_comment(self.root, self.tid, "x", "human", to="claude,codex", ask=True)
+        _, path = board.find_ticket(self.root, self.tid)
+        text = open(path, encoding="utf-8").read()
+        self.assertIn("· to claude,codex · ask", text)
+        self.assertEqual(board.parse_ticket(text).comments[1].to, ["claude", "codex"])
+
+    def test_the_reported_case_a_comma_and_a_space(self):
+        """Thread 015 was posted as `--to "claude, codex"` and reached neither."""
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude, codex", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["claude", "codex"])
+        self.assertEqual(self.numbers("claude"), [2])
+        self.assertEqual(self.numbers("codex"), [2])
+
+    def test_case_is_preserved_and_matched_insensitively(self):
+        board.add_comment(self.root, self.tid, "x", "human", to="Claude,CODEX", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["Claude", "CODEX"])
+        self.assertEqual(self.numbers("claude"), [2])
+        self.assertEqual(self.numbers("codex"), [2])
+
+    def test_duplicates_collapse_keeping_first_spelling(self):
+        board.add_comment(self.root, self.tid, "x", "human", to="Andy,andy,ANDY", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["Andy"])
+
+    def test_a_name_with_a_space_survives_in_a_list(self):
+        board.add_comment(self.root, self.tid, "x", "human", to="Andy Smith,codex", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["Andy Smith", "codex"])
+
+    def test_unusable_tokens_are_dropped_and_good_ones_survive(self):
+        """Unlike `re`, one bad token must not void the list: a voided recipient
+        list leaves an ask addressed to nobody, which is the defect being fixed."""
+        board.add_comment(self.root, self.tid, "x", "human", to="claude,,codex", ask=True)
+        self.assertEqual(self.thread().comments[1].to, ["claude", "codex"])
+
+    def test_all_tokens_unusable_is_refused_when_asking(self):
+        with self.assertRaises(ValueError):
+            board.add_comment(self.root, self.tid, "x", "human", to=",,,", ask=True)
+
+    def test_a_recipient_cannot_forge_a_header(self):
+        board.add_comment(self.root, self.tid, "x", "human",
+                          to="codex,a · b · ask", ask=True)
+        c = self.thread().comments[1]
+        self.assertEqual(len(self.thread().comments), 2)
+        self.assertNotIn("·", "".join(c.to))
+
+    # The inbox rule, per recipient
+
+    def test_pending_for_each_recipient_separately(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        self.assertEqual(self.numbers("claude"), [2])
+        self.assertEqual(self.numbers("codex"), [2])
+
+    def test_one_recipient_answering_leaves_it_pending_for_the_other(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        board.add_comment(self.root, self.tid, "B", "codex", to="human", refs=[2])
+        self.assertEqual(self.numbers("codex"), [])
+        self.assertEqual(self.numbers("claude"), [2])
+
+    def test_the_asker_can_cancel_for_everyone(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        board.add_comment(self.root, self.tid, "never mind", "human", refs=[2])
+        self.assertEqual(self.numbers("claude"), [])
+        self.assertEqual(self.numbers("codex"), [])
+
+    def test_a_re_from_a_non_recipient_clears_nobody(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        board.add_comment(self.root, self.tid, "butting in", "mallory", refs=[2])
+        self.assertEqual(self.numbers("claude"), [2])
+        self.assertEqual(self.numbers("codex"), [2])
+
+    def test_unnamed_inbox_lists_it_while_any_recipient_remains(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        board.add_comment(self.root, self.tid, "B", "codex", to="human", refs=[2])
+        self.assertEqual(self.numbers(), [2])
+        board.add_comment(self.root, self.tid, "A", "claude", to="human", refs=[2])
+        self.assertEqual(self.numbers(), [])
+
+    def test_unnamed_inbox_reports_only_the_remaining_recipients(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        board.add_comment(self.root, self.tid, "B", "codex", to="human", refs=[2])
+        rows = board.pending_asks(self.thread())
+        self.assertEqual([board.remaining_recipients(self.thread(), n) for n, _ in rows],
+                         [["claude"]])
+
+    # Several answers to one ask
+
+    def test_two_answers_before_the_asker_posts_yield_two_rows(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        board.add_comment(self.root, self.tid, "B", "codex", to="human", refs=[2])
+        board.add_comment(self.root, self.tid, "A", "claude", to="human", refs=[2])
+        rows = board.answered_unseen(self.thread(), "human")
+        self.assertEqual([c.by for _, _, _, c in rows], ["codex", "claude"])
+
+    def test_one_answer_to_two_asks_yields_one_row_per_pair(self):
+        """Cardinality is one row per (ask, answer-message) pair. `re 2,3` in a
+        single reply answers two asks and must report both, or an implementer
+        deduplicating by answer would silently hide one of them."""
+        board.add_comment(self.root, self.tid, "q1", "human", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "q2", "human", to="codex", ask=True)
+        board.add_comment(self.root, self.tid, "both", "codex", to="human", refs=[2, 3])
+        rows = board.answered_unseen(self.thread(), "human")
+        self.assertEqual([(ask_n, ans_n) for ask_n, _, ans_n, _ in rows], [(2, 4), (3, 4)])
+
+    def test_every_json_surface_emits_an_array(self):
+        board.add_comment(self.root, self.tid, "poll", "human", to="claude,codex", ask=True)
+        _, path = board.find_ticket(self.root, self.tid)
+        data = board.ticket_to_dict(board.THREADS_DIR, board.load_ticket(path))
+        self.assertEqual(data["comments"][1]["to"], ["claude", "codex"])
 
 
 class TestConversationCLI(unittest.TestCase):
@@ -1519,7 +1667,7 @@ class TestConversationCLI(unittest.TestCase):
         self.run_cli("comment", "2", "q2", "--by", "codex", "--to", "human", "--ask")
         _, out = self.run_cli("inbox", "--json")
         rows = json.loads(out)
-        self.assertEqual(sorted(r["to"] for r in rows), ["codex", "human"])
+        self.assertEqual(sorted(r["to"] for r in rows), [["codex"], ["human"]])
 
     def test_threads_lists_with_pending_count(self):
         self.run_cli("thread", "Quiet", "hi", "--by", "claude")
@@ -1677,7 +1825,7 @@ class TestConversationUI(unittest.TestCase):
         self.assertEqual(col, board.THREADS_DIR)
         t = board.load_ticket(path)
         self.assertEqual((t.title, t.comments[0].by, t.comments[0].to, t.comments[0].ask, t.comments[0].body),
-                         ("Design", "jimmy", "codex", True, "Opening line"))
+                         ("Design", "jimmy", ["codex"], True, "Opening line"))
 
     def test_post_comment_with_trailers(self):
         tid = board.create_thread(self.root, "t", "q", "claude", to="human", ask=True)
@@ -1690,7 +1838,7 @@ class TestConversationUI(unittest.TestCase):
         t = board.load_ticket(path)
         self.assertEqual(len(t.comments), 2)
         c = t.comments[1]
-        self.assertEqual((c.by, c.to, c.re, c.ask), ("human", "claude", [1], True))
+        self.assertEqual((c.by, c.to, c.re, c.ask), ("human", ["claude"], [1], True))
         self.assertEqual(board.pending_asks(t, "human"), [])
 
     def test_page_is_a_projection(self):

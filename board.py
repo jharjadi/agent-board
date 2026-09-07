@@ -33,10 +33,18 @@ class Comment:
     by: str
     at: str
     body: str
-    to: str | None = None
+    to: list[str] = field(default_factory=list)
     ask: bool = False
     re: list[int] = field(default_factory=list)
     commit: str | None = None
+
+    def __post_init__(self) -> None:
+        """A caller handing over one name as a string is normalised rather than
+        iterated. `",".join("codex")` yields "c,o,d,e,x", which renders a header
+        naming five recipients and is the kind of silent corruption this file
+        exists to avoid."""
+        if isinstance(self.to, str):
+            self.to = parse_recipients(self.to)
 
 @dataclass
 class Ticket:
@@ -50,11 +58,11 @@ class Ticket:
     comments: list[Comment] = field(default_factory=list)
 
 
-def _parse_trailers(trail: str) -> tuple[str | None, bool, list[int], str | None]:
+def _parse_trailers(trail: str) -> tuple[list[str], bool, list[int], str | None]:
     """Read ` · to x · ask · re 1,2 · commit abc`. Unknown keys are ignored so
     a newer writer cannot make a file unreadable; a malformed known key counts
     as absent, never as something else; a duplicate keeps its first value."""
-    to: str | None = None
+    to: list[str] = []
     ask = False
     refs: list[int] = []
     commit: str | None = None
@@ -69,7 +77,7 @@ def _parse_trailers(trail: str) -> tuple[str | None, bool, list[int], str | None
             continue
         seen.add(key)
         if key == "to" and value:
-            to = value
+            to = parse_recipients(value)
         elif key == "ask" and not value:
             ask = True
         elif key == "re":
@@ -89,7 +97,7 @@ def _parse_trailers(trail: str) -> tuple[str | None, bool, list[int], str | None
 def render_comment_header(c: Comment) -> str:
     parts = ["## comment — %s · %s" % (c.by, c.at)]
     if c.to:
-        parts.append("to %s" % c.to)
+        parts.append("to %s" % ",".join(c.to))
     if c.ask:
         parts.append("ask")
     if c.re:
@@ -223,6 +231,29 @@ def sanitize_name(value: str) -> str:
     """A header scalar: one line, and never the separator, so a name cannot end
     the header early or start a trailer of its own."""
     return sanitize_scalar(value.replace("·", ""))
+
+
+def parse_recipients(value: str | None) -> list[str]:
+    """Read a `to` value: comma-separated names, each sanitised as a header
+    scalar. Case is preserved as written and compared case-insensitively, so a
+    duplicate keeps its first spelling.
+
+    An unusable token is dropped rather than voiding the list, which is
+    deliberately unlike `re`, where one bad token discards every reference. A
+    voided recipient list leaves an `ask` addressed to nobody, and an ask nobody
+    can see is the defect this exists to prevent.
+    """
+    if value is None:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in value.split(","):
+        name = sanitize_name(token)
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append(name)
+    return out
 
 
 def neutralise_body(body: str) -> str:
@@ -605,22 +636,21 @@ def _prepare_comment(body: str, by: str, to: str | None, ask: bool,
     by = sanitize_name(by)
     if not by:
         raise ValueError("--by must name who is writing")
-    if to is not None:
-        to = sanitize_name(to) or None
-        if to is None:
-            raise ValueError("--to must name a recipient")
+    recipients = parse_recipients(to)
+    if to is not None and not recipients:
+        raise ValueError("--to must name a recipient")
     if commit is not None:
         commit = sanitize_name(commit) or None
         if commit is None:
             raise ValueError("--commit must contain a value")
-    if ask and not to:
+    if ask and not recipients:
         raise ValueError("--ask needs --to: who should answer?")
     refs = sorted(set(refs or []))
     for n in refs:
         if n < 1:
             raise ValueError("--re %d: message numbers start at 1" % n)
     return Comment(by=by, at=utc_now(), body=neutralise_body(body.strip()),
-                   to=to, ask=ask, re=refs, commit=commit)
+                   to=recipients, ask=ask, re=refs, commit=commit)
 
 
 def _append_comment_locked(path: str, comment: Comment) -> int:
@@ -687,25 +717,57 @@ def pending_asks(t: Ticket, name: str | None = None) -> list[tuple[int, Comment]
     lists it in `re`. Who spoke last is never consulted; the bridge's tool
     guessed from that and was patched twice after hiding a real request.
     A `re` naming a message at or after itself has no effect."""
-    answered: set[int] = set()
-    for i, c in enumerate(t.comments, start=1):
-        answered.update(n for n in c.re if 1 <= n < i)
+    answered_by, cancelled = _answer_index(t)
     want = name.lower() if name is not None else None
     rows = []
     for i, c in enumerate(t.comments, start=1):
-        if not c.ask or not c.to or i in answered:
+        if not c.ask or not c.to or i in cancelled:
             continue
-        if want is not None and c.to.lower() != want:
+        outstanding = [r for r in c.to if r.lower() not in answered_by.get(i, set())]
+        if not outstanding:
+            continue
+        if want is not None and want not in {r.lower() for r in outstanding}:
             continue
         rows.append((i, c))
     return rows
+
+
+def _answer_index(t: Ticket) -> tuple[dict[int, set[str]], set[int]]:
+    """One pass over the log: who has answered each message, and which messages
+    the asker withdrew. Derived every read, so nothing can go stale and a hand
+    edit still yields the right answer."""
+    answered_by: dict[int, set[str]] = {}
+    cancelled: set[int] = set()
+    for i, c in enumerate(t.comments, start=1):
+        for target in c.re:
+            if not 1 <= target < i:
+                continue
+            answered_by.setdefault(target, set()).add(c.by.lower())
+            if c.by.lower() == t.comments[target - 1].by.lower():
+                cancelled.add(target)
+    return answered_by, cancelled
+
+
+def remaining_recipients(t: Ticket, number: int) -> list[str]:
+    """Who still owes an answer to message `number`, in the order addressed.
+    The Waiting strip shows this rather than the original address list."""
+    if not 1 <= number <= len(t.comments):
+        return []
+    c = t.comments[number - 1]
+    answered_by, cancelled = _answer_index(t)
+    if number in cancelled:
+        return []
+    done = answered_by.get(number, set())
+    return [r for r in c.to if r.lower() not in done]
 
 
 def answered_unseen(t: Ticket, name: str) -> list[tuple[int, Comment, int, Comment]]:
     """The inbox's second question: what came back to me. An ask `name` posted
     that a later message answers with `re`, where `name` has posted nothing in
     the file after that answer. Posting anything afterwards is the
-    acknowledgement. Returns (ask_n, ask, answer_n, answer), latest answer."""
+    acknowledgement. Returns one row per answering message, (ask_n, ask,
+    answer_n, answer), because an ask may now have several recipients and
+    reporting only the latest would hide the earlier answers."""
     me = name.lower()
     last_mine = max((i for i, c in enumerate(t.comments, start=1) if c.by.lower() == me),
                     default=0)
@@ -713,9 +775,9 @@ def answered_unseen(t: Ticket, name: str) -> list[tuple[int, Comment, int, Comme
     for i, c in enumerate(t.comments, start=1):
         if not c.ask or c.by.lower() != me:
             continue
-        answers = [(j, d) for j, d in enumerate(t.comments, start=1) if j > i and i in d.re]
-        if answers and last_mine < answers[-1][0]:
-            rows.append((i, c, answers[-1][0], answers[-1][1]))
+        for j, d in enumerate(t.comments, start=1):
+            if j > i and i in d.re and last_mine < j:
+                rows.append((i, c, j, d))
     return rows
 
 
@@ -748,6 +810,7 @@ def inbox_rows(root: str, name: str | None = None) -> list[dict]:
             "n": n,
             "by": c.by,
             "to": c.to,
+            "waiting_on": remaining_recipients(t, n),
             "at": c.at,
             "commit": c.commit,
             "summary": _first_line(c.body),
@@ -779,8 +842,9 @@ def _print_inbox(rows: list[dict]) -> None:
         for r in section:
             commit = "  %s" % r["commit"] if r["commit"] else ""
             asked = "  (your #%d)" % r["asked"] if r["asked"] else ""
+            addressed = ",".join(r["waiting_on"] or r["to"])
             print("  %s  %-6s #%-3d %s to %s  %s%s%s\n        %s"
-                  % (r["id"], r["kind"], r["n"], r["by"], r["to"],
+                  % (r["id"], r["kind"], r["n"], r["by"], addressed,
                      r["at"].replace("T", " ").rstrip("Z"), commit, asked, r["summary"][:110]))
         print()
 
@@ -916,7 +980,7 @@ def _render_comments(t: Ticket) -> str:
     for n, c in enumerate(t.comments, start=1):
         badges = ""
         if c.to:
-            badges += '<span class="bg">to %s</span>' % esc(c.to)
+            badges += "".join('<span class="bg">to %s</span>' % esc(r) for r in c.to)
         if c.ask:
             badges += '<span class="bg ask">ask</span>'
         if c.re:
@@ -1007,14 +1071,15 @@ def _render_waiting(items: list[tuple[str, Ticket]]) -> str:
     rows = []
     for col, t in items:
         for n, c in pending_asks(t):
-            rows.append((c.at, t, n, c))
+            rows.append((c.at, t, n, c, remaining_recipients(t, n)))
     if not rows:
         return ""
     rows.sort(key=lambda r: (r[0], int(r[1].id), r[2]), reverse=True)
     lis = "".join(
         '<li><a href="#card-%s">%s #%d</a> <b>%s</b> to <b>%s</b>: %s</li>'
-        % (esc(t.id), esc(t.id), n, esc(c.by), esc(c.to), esc(_first_line(c.body)))
-        for _, t, n, c in rows
+        % (esc(t.id), esc(t.id), n, esc(c.by),
+           ", ".join(esc(r) for r in waiting_on), esc(_first_line(c.body)))
+        for _, t, n, c, waiting_on in rows
     )
     return '<div class="wait"><h3>Waiting</h3><ul>%s</ul></div>' % lis
 
@@ -1235,7 +1300,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("id")
     p.add_argument("body", nargs="?", default=None)
     p.add_argument("--by", required=True)
-    p.add_argument("--to", default=None, help="who this is addressed to")
+    p.add_argument("--to", default=None, help="who this is addressed to; NAME[,NAME...]")
     p.add_argument("--ask", action="store_true", help="a reply is expected (needs --to)")
     p.add_argument("--re", default=None, metavar="N[,N...]",
                    help="message numbers this answers")
