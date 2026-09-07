@@ -1630,6 +1630,63 @@ class TestMultiRecipient(unittest.TestCase):
             self.assertIsInstance(r["to"], list)
             self.assertIsInstance(r["waiting_on"], list)
 
+    def _cli(self, argv, stdin=None):
+        """Run the real CLI in the board's directory and return (code, stdout)."""
+        cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+        try:
+            out = io.StringIO()
+            real_stdin = sys.stdin
+            if stdin is not None:
+                sys.stdin = io.StringIO(stdin)
+            try:
+                with contextlib.redirect_stdout(out):
+                    code = board.main(argv)
+            finally:
+                sys.stdin = real_stdin
+            return code, out.getvalue()
+        finally:
+            os.chdir(cwd)
+
+    def test_all_four_json_commands_emit_an_array(self):
+        """Through the commands, not the shared helper. list/show/threads go via
+        ticket_to_dict and inbox builds its own rows, but the public surface is
+        what a consumer breaks against."""
+        tid = board.create_ticket(self.root, "target", "desc")
+        board.add_comment(self.root, tid, "poll", "human", to="claude,codex", ask=True)
+
+        code, out = self._cli(["show", tid, "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["comments"][0]["to"], ["claude", "codex"])
+
+        code, out = self._cli(["list", "--json"])
+        self.assertEqual(code, 0)
+        listed = [c for row in json.loads(out) for c in row["comments"]]
+        self.assertIn(["claude", "codex"], [c["to"] for c in listed])
+
+        code, out = self._cli(["threads", "--json"])
+        self.assertEqual(code, 0)
+        for row in json.loads(out):
+            for c in row["comments"]:
+                self.assertIsInstance(c["to"], list)
+
+        code, out = self._cli(["inbox", "--json"])
+        self.assertEqual(code, 0)
+        rows = json.loads(out)
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertIsInstance(r["to"], list)
+            self.assertIsInstance(r["waiting_on"], list)
+
+    def test_cli_refuses_an_empty_stdin_body_and_the_ask_survives(self):
+        """The path that actually produced a blank reply: `--body-file -` with
+        nothing on stdin. It discharged a real ask while saying nothing."""
+        board.add_comment(self.root, self.tid, "poll", "human", to="codex", ask=True)
+        code, _ = self._cli(["comment", self.tid, "--by", "codex", "--to", "human",
+                             "--re", "2", "--body-file", "-"], stdin="")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.numbers("codex"), [2])
+
     def test_an_empty_body_cannot_discharge_an_ask(self):
         """Codex posted a blank reply through `--body-file -` with no stdin; it
         cleared a real ask while saying nothing."""

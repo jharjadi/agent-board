@@ -720,11 +720,16 @@ def watch_once(root: str, column: str, seen: dict[str, float]) -> tuple[list[str
     return changed, current
 
 def pending_asks(t: Ticket, name: str | None = None) -> list[tuple[int, Comment]]:
-    """The inbox rule, stated once: a message is pending when it carries `ask`,
-    its `to` matches `name` (any case), and no later message in the same file
-    lists it in `re`. Who spoke last is never consulted; the bridge's tool
-    guessed from that and was patched twice after hiding a real request.
-    A `re` naming a message at or after itself has no effect."""
+    """The inbox rule, stated once: a message is pending **for a recipient** when
+    it carries `ask`, that recipient is one of its `to` names (any case), and no
+    later message **by that recipient** lists it in `re`. One recipient answering
+    does not answer for the others; only a later `re` from the *asker* withdraws
+    it for everyone. With no `name`, an ask is listed while any recipient remains,
+    and `remaining_recipients` says which.
+
+    Who spoke last is never consulted; the bridge's tool guessed from that and was
+    patched twice after hiding a real request. A `re` naming a message at or after
+    itself has no effect."""
     answered_by, cancelled = _answer_index(t)
     want = name.lower() if name is not None else None
     rows = []
