@@ -101,7 +101,7 @@ In `_parse_trailers`, `to` splits on `,`. Each token is stripped and sanitised w
 `sanitize_name`; empty tokens are dropped. Duplicates are removed, keeping first
 appearance, compared case-insensitively.
 
-One helper, `_parse_recipients`, does this and is shared by `_parse_trailers`
+One helper, `parse_recipients`, does this and is shared by `_parse_trailers`
 (reading files) and `_prepare_comment` (writing them), so the HTTP and CLI paths
 cannot drift. The web POST handler keeps passing one raw string through to
 `add_comment`/`create_thread`; it does not parse recipients itself.
@@ -148,9 +148,14 @@ claude's inbox before claude answered at 06:05:38, recreating the exact defect f
 every respondent after the first. A poll is the case where every answer matters.
 
 `pending_asks(t, name)` returns asks still outstanding for `name`.
-`pending_asks(t, None)` keeps an ask listed while **any** recipient remains, and
-reports which recipients those are, so the Waiting strip shows who has yet to
-answer rather than the original address list.
+`pending_asks(t, None)` keeps an ask listed while **any** recipient remains.
+
+Its return shape is unchanged, `(n, Comment)`, and **the parsed `Comment` is never
+mutated**: `c.to` always holds the addressed list as written. Who still owes an
+answer is a separate derivation, `remaining_recipients(t, n) -> list[str]`, so the
+JSON surfaces keep reporting what was addressed while the human-facing views report
+what is outstanding. `inbox_rows` therefore carries both: `to` as addressed, and a
+new `waiting_on` key. The CLI printer and the Waiting strip render `waiting_on`.
 
 ### Several answers to one ask
 
@@ -159,8 +164,11 @@ replies. It currently emits only the latest answer per ask, so two answers arriv
 before the asker next posts would collapse into one row and the earlier one would
 be silently dropped — the same class of bug as the one being fixed.
 
-It therefore emits **one row per answering message**, not one per ask. Its selector
-is unchanged: asks are still found by `c.by`, and `to` is never read.
+It therefore emits **one row per (ask, answer-message) pair.** Two answers to one
+ask produce two rows. One reply carrying `re 2,3` answers two asks and produces two
+rows with the same answer number and different ask numbers, so an implementer
+deduplicating by answer cannot silently hide a referenced ask. Its selector is
+unchanged: asks are still found by `c.by`, and `to` is never read.
 
 ## CLI
 
@@ -196,8 +204,10 @@ draft of this spec claimed the recipe breaks. It does not.
   markup through the comma path.
 - The Waiting strip lists all recipients for an entry, comma-joined.
 - The reply form's `to` field takes the same comma-separated text. The POST handler
-  currently does `(fields.get("to") or [""])[0].strip() or None`; it splits on
-  commas and sanitises each token like the CLI.
+  keeps passing that one raw string through to `add_comment` / `create_thread`
+  unchanged; splitting and sanitising happen once, inside `_prepare_comment` via
+  `parse_recipients`. The HTTP and CLI paths therefore cannot drift, and no
+  recipient parsing is duplicated in the request handler.
 
 ## Testing
 
