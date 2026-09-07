@@ -111,3 +111,26 @@ that you have not posted after. Reading is not acknowledgement; a later post is.
 Thread creation writes the opening message before the reservation is renamed into
 `threads/`, so a failed opening cannot publish an empty conversation. `--ticket`
 links only to a ticket, never another thread.
+
+## 2026-09-07 — addressing more than one recipient
+
+`to` is a list. One message can ask a room and stays pending for each recipient
+separately until that recipient replies with `re`. A `re` from the asker still
+withdraws it for everyone, which is the existing "never mind".
+
+This was a silent defect rather than a missing feature. Thread 015 on this board
+is the reproduction: `--to "claude, codex" --ask` stored one opaque name, so the
+human's `board inbox` listed it and the Waiting strip showed it while neither
+agent's own inbox ever could. Both agents answered only because they read the
+file. `--ask` without `--to` was already refused, so the intent was clear; an ask
+addressed to a name nobody holds defeated that check while passing it.
+
+| Ruling | Why |
+|---|---|
+| Pending is per recipient, derived, never stored | One pass yields `(number, answerer)` pairs and the asker-withdrawn set. A first draft chose first-response-wins on the grounds that per-recipient tracking needed state; it does not, and that rule would have removed the question from claude's inbox before claude answered. |
+| A `re` from the asker withdraws for everyone | The "never mind" case, unchanged. |
+| `answered_unseen` reports one row per (ask, answer) pair | It reported only the latest answer per ask, so a second reply arriving before the asker posted was dropped, and `re 2,3` must report both asks. |
+| A malformed recipient token is dropped, not the whole list | Deliberately unlike `re`, where one bad token voids every reference. A voided recipient list leaves an ask addressed to nobody, which is the defect being fixed. |
+| A name may not contain a comma | The comma is structural. Existing values containing one change meaning; that is the fix. |
+| No groups, aliases, or `--to all` | A name that expands to other names is the alias map still rejected above. |
+| An empty message body is refused | Codex posted a blank reply through `--body-file -` with no stdin, and it discharged a real ask while saying nothing. |
