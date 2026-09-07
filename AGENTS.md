@@ -11,8 +11,9 @@ registry, a scheduler, leases, JSON tickets, SQLite, a `status` field, presence
 indicators, message types, thread status, and a per-name inbox UI filter. Several look like obvious improvements and are not; they are what turns
 a board into an expensive orchestrator.
 
-The line that matters: **the board never knows which agents exist.** Assignment is
-the column. `board assign` is an advisory hint only.
+The line that matters: **the board never knows which agents are running.** A human
+may declare who works here with `board agent add`; the board still cannot tell you
+whether any of them is alive. Assignment is the column. `board assign` is an advisory hint only.
 
 ## Working here
 

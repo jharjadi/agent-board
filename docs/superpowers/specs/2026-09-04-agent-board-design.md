@@ -23,13 +23,19 @@ Deliberately excluded. Each was considered and rejected, not overlooked.
 | Excluded | Why |
 |---|---|
 | Autonomous operation | Human stays in the loop. Removes leases, timeouts, budget caps, stop conditions. |
-| Agent registry / roster | Roster state goes stale; a crashed agent stays registered forever. You never need to know who exists, only what is unclaimed. |
+| Agent registry / roster *(superseded in part; see note below)* | Roster state goes stale; a crashed agent stays registered forever. You never need to know who exists, only what is unclaimed. |
 | A scheduler | Assignment is human, or an agent takes the top of its column. **Never use an LLM as a scheduler** — that is what makes agent boards expensive. |
 | Leases / claim expiry | With a human watching, a stuck ticket is noticed. Add only if operation becomes unattended. |
 | A database | Kills git as the audit trail. See "Why not SQLite". |
 | Runtime schema validation | The predecessor's schemas were never enforced and nothing broke. |
 | Configurable columns | Sounds free, is not. Fixed set for v1. |
 | Drag and drop, auth, websockets | Scope creep. Buttons, localhost, meta-refresh. |
+
+> **Superseded in part, 2026-09-07.** The no-roster half of this ruling no longer
+> holds: a human may declare who works here with `board agent add`, exposed through
+> `board agent list`. Aliases, runtime registration, presence, leases and scheduling
+> stay rejected. See `docs/decisions.md`, 2026-09-07.
+
 
 ## Storage
 

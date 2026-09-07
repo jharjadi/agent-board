@@ -112,7 +112,7 @@ Moving a ticket to `review` assigns it to whoever watches `review`. You never ne
 to know which agent that is today, or whether it is Claude or Codex or a person.
 
 `board assign 7 codex` sets an **advisory** owner hint on top of that. The board
-routes nothing and does not know which agents exist — it is a sticky note, and a
+routes nothing and does not know which agents are running — it is a sticky note, and a
 different agent picking the ticket up is fine.
 
 This is deliberate. A board that knows about agents wants to know which are running,
@@ -271,7 +271,7 @@ improvements. They are what turns a task board into an expensive orchestrator �
 predecessor to this tool burned tokens on agents deciding who should do the work
 rather than doing it.
 
-The line that matters: **the board never knows which agents exist.**
+The line that matters: **the board never knows which agents are running.**
 
 Also there: the three defects that shipped past a green test suite and were caught by
 review, including an id-allocation scheme that was wrong twice.

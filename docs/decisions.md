@@ -9,7 +9,7 @@ states *why*, including the things we tried and rejected.
 | Rejected | Why |
 |---|---|
 | Copying a folder into each project | The predecessor (`.agent-bridge`) was copied into many repos and diverged. One installed file, per-project state only. |
-| An agent registry | Roster state goes stale — a crashed agent stays registered forever. You never need to know who exists, only what is unclaimed. |
+| An agent *runtime* registry | Roster state written by agents goes stale — a crashed agent stays registered forever. Superseded in part on 2026-09-07: a human may declare who works here. The board still never learns who is *running*. |
 | A scheduler | Assignment is the column, or a human. An LLM scheduler is the main reason multi-agent boards get expensive. |
 | Leases / claim expiry | A human is in the loop and notices a stuck ticket. Revisit only if operation becomes unattended. |
 | JSON tickets | `comments[]` is written concurrently; JSON arrays conflict in git every time and appends require a full rewrite. |
@@ -95,7 +95,7 @@ against the code before building.
 | Threads are column-less, with no status and no close | Liveness is "has an unanswered ask". A status field is what the board refused for tickets, for the same reason. |
 | No message types; two trailers, `ask` and `re` | Twelve types plus thirteen ad hoc ones reduce to two facts. `re` is a list because one thread superseded three open requests at once. |
 | Pending is computed from `ask` and `re`, never from who spoke last | produxiom2's tool guessed from the newest message's type and was patched twice after hiding a real request. |
-| Names are free strings; no roster, no aliases | The claude/engineer split came from renaming mid-flight. The fix is choosing a name once. |
+| Names are free strings; no aliases | The claude/engineer split came from renaming mid-flight. The fix is choosing a name once. The no-roster half is superseded; see 2026-09-07 below. Aliases stay rejected. |
 | The board never notifies and never runs git | The poster nudges. The human commits. The files are unignored, so committing the board commits the conversation. |
 | One file per thread, appended under the lock | Codex first argued for one file per message and withdrew it for a one-machine board. What it asked for instead, and got: readers that compute pending take the lock, and an append is one write loop. |
 | The header parser anchors on the timestamp | Anchoring on the first separator read an author of `alice · <ts> · to bob` and a timestamp of `ask`. Codex found it. |
@@ -134,3 +134,35 @@ addressed to a name nobody holds defeated that check while passing it.
 | A name may not contain a comma | The comma is structural. Existing values containing one change meaning; that is the fix. |
 | No groups, aliases, or `--to all` | A name that expands to other names is the alias map still rejected above. |
 | An empty message body is refused | Codex posted a blank reply through `--body-file -` with no stdin, and it discharged a real ask while saying nothing. |
+
+## 2026-09-07 — the agent roster, and what it supersedes
+
+**Supersedes the 2026-09-05 no-roster ruling:** the board may store a
+human-maintained advisory mapping of agent name to standing role and expose it
+through `board agent list`. It remains non-authoritative: addressing stays
+free-form; the roster neither asserts nor detects liveness, and agents never
+write to it.
+
+This is a reversal, recorded rather than argued away. An earlier draft of the spec
+devoted a section to why a roster was "not the registry" while the ruling saying
+*no roster* sat unquoted in this file. Codex called that rationalisation and it
+was right. The operational test that survives is narrower than the argument was:
+**if every agent process dies right now, is any file on the board wrong?** For a
+runtime registry, yes. For this roster, no — it never claimed anyone was running.
+
+Still rejected, unchanged: runtime registration, presence, heartbeats, expiry,
+leases, scheduling, and aliases. Avoiding heartbeats answered the registry
+objection; it never answered the roster objection, which is why this is a
+supersession and not a clarification.
+
+| Ruling | Why |
+|---|---|
+| The invariant is now "the board never knows which agents are **running**" | It could never answer that and still cannot. What changed is that it can repeat what a human wrote down. |
+| The roster is not projected into `AGENTS.md` | The block points at `board agent list`, so there is one copy. An earlier design embedded the names, which is two copies with no repair path: a hand edit would not re-render, and a crash could land one write and not the other. Follows the `status` field ruling above. |
+| The spawn prohibition is unconditional | An empty roster is legal, and an agent is plainly running even then. Gating the prohibition on a non-empty roster would leave the observed failure unfixed on every existing board. It **addresses** that failure; it does not prevent it, since it depends on the agent obeying. |
+| A name may not contain a comma, or start with `#` | A comma could never be addressed once `to` became a list. A leading `#` reads back as a comment and the entry would vanish; `sanitize_name` keeps it, so nothing else would catch it. |
+| A bad hand-edited name is skipped **with a warning on stderr** | Skipping silently would leave the human believing an agent is declared. |
+| Case-differing duplicate names are an error naming both lines | `board inbox` could not tell them apart, so a coin toss is worse than a refusal. |
+| `init` seeds only when it creates the board | Rerunning `init` is the documented upgrade path and must not declare agents that may not exist on that project. `--no-agents` seeds nothing. |
+| `clear` requires `--all` | An omitted argument meaning "wipe everything" is a footgun. `remove` takes several names and covers what a human actually does. |
+| No minimum agent count | A one-agent board with a human reviewer is valid. |

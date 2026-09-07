@@ -1472,6 +1472,171 @@ class TestPending(unittest.TestCase):
         self.assertEqual(board.inbox_rows(self.root), [])
 
 
+class TestAgentRoster(unittest.TestCase):
+    """The human declares who works here. `.agent-board/agents` is the only copy;
+    the block points at `board agent list` rather than embedding the names, so
+    nothing can drift and there is no reconcile step."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = board.init_board(self.tmp.name, agents=False)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def path(self):
+        return os.path.join(self.root, "agents")
+
+    def write(self, text):
+        with open(self.path(), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    # Round-trip
+
+    def test_missing_file_is_an_empty_roster(self):
+        self.assertFalse(os.path.exists(self.path()))
+        self.assertEqual(board.read_roster(self.root), [])
+
+    def test_add_list_remove(self):
+        board.roster_add(self.root, "claude", "engineer")
+        board.roster_add(self.root, "codex", "reviewer")
+        self.assertEqual(board.read_roster(self.root),
+                         [("claude", "engineer"), ("codex", "reviewer")])
+        board.roster_remove(self.root, ["claude"])
+        self.assertEqual(board.read_roster(self.root), [("codex", "reviewer")])
+
+    def test_remove_several_and_absent_is_not_an_error(self):
+        board.roster_add(self.root, "a", "x")
+        board.roster_add(self.root, "b", "y")
+        board.roster_remove(self.root, ["a", "b", "nobody"])
+        self.assertEqual(board.read_roster(self.root), [])
+
+    def test_clear_empties_it(self):
+        board.roster_add(self.root, "a", "x")
+        board.roster_clear(self.root)
+        self.assertEqual(board.read_roster(self.root), [])
+
+    def test_role_is_optional(self):
+        board.roster_add(self.root, "solo", None)
+        self.assertEqual(board.read_roster(self.root), [("solo", "")])
+
+    # Names
+
+    def test_add_replaces_the_role_and_keeps_the_stored_spelling(self):
+        board.roster_add(self.root, "Andy", "engineer")
+        board.roster_add(self.root, "andy", "reviewer")
+        self.assertEqual(board.read_roster(self.root), [("Andy", "reviewer")])
+
+    def test_a_name_with_a_space_survives(self):
+        board.roster_add(self.root, "Andy Smith", "engineer")
+        self.assertEqual(board.read_roster(self.root), [("Andy Smith", "engineer")])
+
+    def test_a_comma_in_a_name_is_refused(self):
+        """`to` is comma-separated, so such a name could never be addressed."""
+        with self.assertRaises(ValueError):
+            board.roster_add(self.root, "Doe, John", "engineer")
+
+    def test_a_hand_written_comma_name_is_skipped_with_a_warning(self):
+        """Skipping silently would leave the human believing that agent is
+        declared, which is the quiet lie the board exists to avoid."""
+        self.write("Doe, John\tengineer\ncodex\treviewer\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(board.read_roster(self.root), [("codex", "reviewer")])
+        self.assertIn("line 1 skipped", err.getvalue())
+        self.assertIn("comma", err.getvalue())
+
+    def test_a_leading_hash_is_refused_because_it_reads_back_as_a_comment(self):
+        with self.assertRaises(ValueError):
+            board.roster_add(self.root, "#reviewer", "x")
+
+    def test_an_empty_name_is_refused(self):
+        with self.assertRaises(ValueError):
+            board.roster_add(self.root, "   ", "x")
+
+    def test_a_name_cannot_forge_a_message_header(self):
+        board.roster_add(self.root, "a · b · ask", "x")
+        self.assertNotIn("·", board.read_roster(self.root)[0][0])
+
+    # Hand-edited files
+
+    def test_comments_and_blanks_are_ignored_on_read(self):
+        self.write("# who works here\n\nclaude\tengineer\n\n# trailing\n")
+        self.assertEqual(board.read_roster(self.root), [("claude", "engineer")])
+
+    def test_a_mutation_discards_comments(self):
+        self.write("# note\nclaude\tengineer\n")
+        board.roster_add(self.root, "codex", "reviewer")
+        self.assertNotIn("# note", open(self.path(), encoding="utf-8").read())
+
+    def test_only_the_first_tab_splits_so_a_role_may_contain_one(self):
+        self.write("claude\tengineer\tand tester\n")
+        self.assertEqual(board.read_roster(self.root), [("claude", "engineer and tester")])
+
+    def test_a_name_that_sanitises_to_empty_is_skipped(self):
+        self.write("·\nclaude\tengineer\n")
+        self.assertEqual(board.read_roster(self.root), [("claude", "engineer")])
+
+    def test_case_differing_duplicates_are_an_error(self):
+        self.write("Andy\tengineer\nandy\treviewer\n")
+        with self.assertRaises(ValueError):
+            board.read_roster(self.root)
+
+    # Seeding
+
+    def test_a_fresh_init_seeds_two(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = board.init_board(tmp.name)
+        self.assertEqual(board.read_roster(root),
+                         [("claude", "engineer"), ("codex", "reviewer")])
+
+    def test_init_on_an_existing_board_does_not_seed(self):
+        """The documented upgrade path is rerunning init; it must not declare
+        agents that may not exist on that project."""
+        board.init_board(self.tmp.name)
+        self.assertEqual(board.read_roster(self.root), [])
+
+    def test_no_agents_seeds_nothing(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = board.init_board(tmp.name, agents=False)
+        self.assertEqual(board.read_roster(root), [])
+
+    # The block, and what the roster must not touch
+
+    def test_the_block_carries_the_prohibition_and_the_command(self):
+        block = board.agents_block()
+        self.assertIn("board agent list", block)
+        # exactly once: a cherry-pick once produced two paragraphs, and an
+        # assertIn cannot tell one from two.
+        self.assertEqual(block.count("Do not start other agents"), 1)
+
+    def test_the_block_is_identical_whatever_the_roster_holds(self):
+        empty = board.agents_block()
+        board.roster_add(self.root, "claude", "engineer")
+        self.assertEqual(board.agents_block(), empty)
+
+    def test_a_roster_mutation_leaves_the_agent_docs_untouched(self):
+        base = self.tmp.name
+        board.write_agents_doc(base)
+        before = open(os.path.join(base, "AGENTS.md"), encoding="utf-8").read()
+        board.roster_add(self.root, "claude", "engineer")
+        self.assertEqual(open(os.path.join(base, "AGENTS.md"), encoding="utf-8").read(),
+                         before)
+
+    def test_concurrent_adds_both_survive(self):
+        import threading
+        names = ["a%d" % i for i in range(8)]
+        threads = [threading.Thread(target=board.roster_add,
+                                    args=(self.root, n, "role")) for n in names]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(n for n, _ in board.read_roster(self.root)), sorted(names))
+
+
 class TestMultiRecipient(unittest.TestCase):
     """One ask, several recipients, pending for each until that one answers.
 

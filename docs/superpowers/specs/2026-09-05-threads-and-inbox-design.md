@@ -55,13 +55,19 @@ in produxiom2:
 | Message types | Two facts, ask and re, encode the whole review loop. Types were guessed at and drifted; produxiom2 invented thirteen extra ones. |
 | Thread status, close, archive | A thread is live while it holds an unanswered ask. A status field is what the board refused for tickets, for the same reason. |
 | Inbox directories, unread counters, state files | The bridge had all three; its own "what needs me" tool ignored them and they split by alias once. The inbox is a query. |
-| A roster or alias map | `to` is a free string, like `owner`. The bridge's claude/engineer split came from renaming mid-flight; the fix is choosing names once. |
+| A roster or alias map *(roster half superseded; see note below)* | `to` is a free string, like `owner`. The bridge's claude/engineer split came from renaming mid-flight; the fix is choosing names once. |
 | Notifications | The posting agent nudges the recipient over cmux. The board never does. |
 | Verifying `commit` against git | It is text the board carries. The reviewer checks it. |
 | Per-role memory files | Real need, wrong home. They are project knowledge, not messages. |
 | Importing `.agent-bridge` JSON threads | Possible later as a one-off script. Not part of this. |
 | `board watch threads` | Cut on review. It would only re-test the mtime mechanism on another directory, and the poster nudges anyway. |
 | A per-name filter in the UI | Cut on review. The page suppresses refresh while any input holds text, and POSTs redirect to `/`, so a filter box fights both. `board inbox <name>` is the per-name view. |
+
+> **Superseded in part, 2026-09-07.** The no-roster half of this ruling no longer
+> holds: a human may declare who works here with `board agent add`, exposed through
+> `board agent list`. Aliases, runtime registration, presence, leases and scheduling
+> stay rejected. See `docs/decisions.md`, 2026-09-07.
+
 
 ## Storage
 
@@ -352,7 +358,9 @@ Appended to `docs/decisions.md`:
   is a list because batch supersession is in the record.
 - Pending is computed from `ask` and `re`, never from who spoke last, because
   produxiom2's tool was patched twice for exactly that guess.
-- Names are free strings with no roster and no aliases.
+- Names are free strings with no aliases. **Superseded in part, 2026-09-07:** a
+  human may declare who works here; addressing stays free-form. See
+  `docs/decisions.md`, 2026-09-07.
 - The board never notifies and never runs git. The poster nudges; the human commits.
 - One file per thread, appended under the existing lock, not one file per message.
   Codex first argued for per-message files and withdrew it for a one-machine board;

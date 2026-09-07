@@ -1,7 +1,7 @@
 ---
 title: "Your agent orchestrator is a black box. Mine is a folder."
 published: false
-description: "Coordinate two coding agents with directories and markdown files. No scheduler, no registry, no tokens spent deciding who does the work."
+description: "Coordinate two coding agents with directories and markdown files. No scheduler, no runtime registry, no tokens spent deciding who does the work."
 tags: ai, productivity, opensource, tooling
 cover_image: https://raw.githubusercontent.com/jharjadi/agent-board/main/docs/blog/images/01-board-top.png
 ---
@@ -41,6 +41,7 @@ Here is the whole idea. Your agents coordinate through a directory:
     blocked/
     done/
     threads/
+    agents          <- who works here, written by you
 ```
 
 Columns are directories. Tickets are markdown files. An agent claims work by
@@ -61,7 +62,7 @@ Which means:
 - **Your reviewer's argument is a diff.** When two agents disagree and one
   changes its mind, that is in `git log` a year later.
 
-And you can read the implementation. It is one Python file, 1,364 lines,
+And you can read the implementation. It is one Python file, 1,585 lines,
 standard library only. Not "small for a framework." Small enough that you could
 sit down and understand every line this afternoon, and then change the parts you
 disagree with.
@@ -113,11 +114,12 @@ That is it. Two flags carry the entire protocol. `--ask` says a reply is
 expected. `--re 1` says which message this answers. There is no message type, no
 status field, no state machine. One rule decides everything:
 
-> **An addressed message carrying `ask` is pending until a later message in the
-> same file lists its number in `re`.**
+> **An addressed message carrying `ask` is pending for a recipient until a later
+> message by that recipient lists its number in `re`.**
 
-Not "who spoke last." A plain message is never pending at all. Only an ask is,
-and only until something answers it.
+Not "who spoke last." A plain message is never pending at all. Only an ask is.
+Address two people and it stays pending for each of them separately, so you can
+always see who has yet to reply; a `re` from the asker withdraws it for everyone.
 
 Everything else in this post is that rule doing its job.
 
@@ -187,7 +189,7 @@ down, with the reason. Condensed from `decisions.md`:
 
 | Rejected | Why |
 |---|---|
-| An agent registry | Roster state goes stale. A crashed agent stays registered forever. You never need to know who exists, only what is unclaimed. |
+| An agent registry that agents write to | Roster state maintained at runtime goes stale. A crashed agent stays registered forever. (A list *you* write is fine — it never claims anyone is running.) |
 | A scheduler | Assignment is the column, or a human. An LLM scheduler is the main reason multi-agent boards get expensive. |
 | Leases / claim expiry | A human is in the loop and notices a stuck ticket. |
 | JSON tickets | `comments[]` is written concurrently. JSON arrays conflict in git every time. |
@@ -205,6 +207,12 @@ status field drifted from the directory, because two places can disagree. The
 JSON messages conflicted in git on every concurrent write. And because the whole
 thing was copied per project, there were twelve versions of it, ten of which had
 fallen behind the two I actually maintained.
+
+The distinction I eventually landed on: a list **I** write is harmless, because it
+only ever claims "this project has a reviewer". A list the **agents** write is the
+one that rots, because it claims "the reviewer is available" and nothing corrects
+it when that stops being true. The test I use now is: if every agent process dies
+right now, is any file wrong?
 
 Every one of those was a small, sensible yes at the time. That is how this
 happens. Nobody sets out to build an orchestrator. You add a registry because you

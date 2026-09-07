@@ -296,9 +296,14 @@ def board_lock(root: str):
         os.close(fd)          # closing releases the lock
 
 
-def init_board(base: str | None = None) -> str:
+ROSTER_NAME = "agents"
+SEED_ROSTER = (("claude", "engineer"), ("codex", "reviewer"))
+
+
+def init_board(base: str | None = None, agents: bool = True) -> str:
     base = base or os.getcwd()
     root = os.path.join(base, BOARD_DIR)
+    fresh = not os.path.isdir(root)
     for col in COLUMNS:
         os.makedirs(os.path.join(root, col), exist_ok=True)
     os.makedirs(os.path.join(root, THREADS_DIR), exist_ok=True)
@@ -310,7 +315,106 @@ def init_board(base: str | None = None) -> str:
     ignore = os.path.join(root, ".gitignore")
     if not os.path.exists(ignore):
         atomic_write(ignore, "%s\n" % LOCK_NAME)
+    # Seed only when this call created the board. Rerunning init is the
+    # documented upgrade path, and seeding then would declare two agents that
+    # may not exist on that project — which is also what would make the
+    # "written by a human, deliberately" claim untrue.
+    if fresh and agents:
+        write_roster(root, list(SEED_ROSTER))
     return root
+
+
+def roster_path(root: str) -> str:
+    return os.path.join(root, ROSTER_NAME)
+
+
+def check_roster_name(name: str) -> str:
+    """A declared name must be addressable and must survive a round trip through
+    the file. `to` is comma-separated, so a comma would advertise a recipient
+    nobody could ever address; a leading `#` would be read back as a comment."""
+    clean = sanitize_name(name)
+    if not clean:
+        raise ValueError("an agent name cannot be empty")
+    if "," in clean:
+        raise ValueError("an agent name cannot contain a comma: --to is a "
+                         "comma-separated list, so %r could never be addressed" % clean)
+    if clean.startswith("#"):
+        raise ValueError("an agent name cannot start with '#': the line would be "
+                         "read back as a comment and the entry would vanish")
+    return clean
+
+
+def read_roster(root: str) -> list[tuple[str, str]]:
+    """The declared agents, in file order. Comments and blanks are skipped, and
+    so is any line whose name could not be addressed, because listing an
+    unaddressable name is worse than omitting it."""
+    try:
+        with open(roster_path(root), encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+    except FileNotFoundError:
+        return []
+    out: list[tuple[str, str]] = []
+    seen: dict[str, str] = {}
+    for lineno, line in enumerate(lines, start=1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        raw_name, _, raw_role = line.partition("\t")
+        try:
+            name = check_roster_name(raw_name)
+        except ValueError as exc:
+            # A hand edit can write a name the CLI would have refused. Skipping
+            # it silently would leave the human believing an agent is declared,
+            # which is the same class of quiet lie the board exists to avoid.
+            print("warning: %s line %d skipped: %s" % (roster_path(root), lineno, exc),
+                  file=sys.stderr)
+            continue
+        if name.lower() in seen:
+            raise ValueError(
+                "%s line %d: %r and %r differ only by case. `board inbox` could "
+                "not tell them apart; edit the file so one name is used."
+                % (roster_path(root), lineno, seen[name.lower()], name))
+        seen[name.lower()] = name
+        out.append((name, sanitize_scalar(raw_role)))
+    return out
+
+
+def write_roster(root: str, entries: list[tuple[str, str]]) -> None:
+    """Canonicalise and replace. Comments do not survive a mutation, which is
+    stated in `board agent list` and in the file's own header."""
+    body = "".join("%s\t%s\n" % (n, r) if r else "%s\n" % n for n, r in entries)
+    atomic_write(roster_path(root),
+                 "# Declared by a human. Hand edits take effect at once, but\n"
+                 "# comments do not survive the next `board agent` command.\n" + body)
+
+
+def roster_add(root: str, name: str, role: str | None = None) -> None:
+    clean = check_roster_name(name)
+    with board_lock(root):
+        entries = read_roster(root)
+        for i, (existing, _) in enumerate(entries):
+            if existing.lower() == clean.lower():
+                entries[i] = (existing, sanitize_scalar(role or ""))
+                break
+        else:
+            entries.append((clean, sanitize_scalar(role or "")))
+        write_roster(root, entries)
+
+
+def roster_remove(root: str, names: list[str]) -> list[str]:
+    drop = {sanitize_name(n).lower() for n in names}
+    with board_lock(root):
+        entries = read_roster(root)
+        keep = [e for e in entries if e[0].lower() not in drop]
+        removed = [n for n, _ in entries if n.lower() in drop]
+        write_roster(root, keep)
+    return removed
+
+
+def roster_clear(root: str) -> list[str]:
+    with board_lock(root):
+        removed = [n for n, _ in read_roster(root)]
+        write_roster(root, [])
+    return removed
 
 
 AGENTS_BEGIN = "<!-- agent-board:begin -->"
@@ -340,11 +444,12 @@ conversations that are not about a ticket.
     board thread "title" "..." --by <you> --to <them> --ask
                                       start a conversation with another agent
     board threads                     list conversations
+    board agent list                  who works on this project
 
 **Do not start other agents.** The agents on this project are started by the
 human, and one is probably already running. Never run `claude`, `codex`, or a
-spawn/subagent tool yourself. If a task needs an agent that is not already
-working here, put a ticket in `todo/` describing it and say so in your reply.
+spawn/subagent tool yourself. If a task needs an agent that `board agent list`
+does not show, put a ticket in `todo/` describing it and say so in your reply.
 
 Use your own name or role as `<you>`, whatever the user calls you, and use it
 consistently. If the user has not told you which column is yours, ask, or take
@@ -863,6 +968,17 @@ def _print_inbox(rows: list[dict]) -> None:
         print()
 
 
+def _print_roster(root: str) -> None:
+    entries = read_roster(root)
+    if not entries:
+        print("(no agents declared)")
+        return
+    for name, role in entries:
+        print("  %-14s %s" % (name, role))
+    print("\nDeclared by you. Hand edits take effect at once; comments do not\n"
+          "survive the next `board agent` command.")
+
+
 def _print_threads(rows: list[Ticket]) -> None:
     if not rows:
         print("(no threads)")
@@ -1342,6 +1458,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("column")
     p.add_argument("--interval", type=float, default=5.0)
 
+    p = sub.add_parser("agent", help="who works on this project (declared by you)")
+    asub = p.add_subparsers(dest="action")
+    q = asub.add_parser("add", help="add an agent, or replace its role")
+    q.add_argument("name")
+    q.add_argument("--role", default=None)
+    q = asub.add_parser("remove", help="remove one or more agents")
+    q.add_argument("names", nargs="+", metavar="name")
+    asub.add_parser("list", help="print the roster")
+    q = asub.add_parser("clear", help="empty the roster; needs --all")
+    q.add_argument("--all", action="store_true", dest="all_")
+
     p = sub.add_parser("serve")
     p.add_argument("--port", type=int, default=8899)
 
@@ -1351,7 +1478,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.cmd == "init":
-        print("initialised %s" % init_board())
+        print("initialised %s" % init_board(agents=not args.no_agents))
         if not args.no_agents:
             for path in write_agents_doc():
                 print("wrote %s" % path)
@@ -1431,6 +1558,21 @@ def main(argv: list[str] | None = None) -> int:
                 for tid in changed:
                     print("%s %s" % (args.column, tid), flush=True)
                 time.sleep(args.interval)
+        elif args.cmd == "agent":
+            if args.action == "add":
+                roster_add(root, args.name, args.role)
+                _print_roster(root)
+            elif args.action == "remove":
+                removed = roster_remove(root, args.names)
+                print("removed %s" % ", ".join(removed) if removed else "nothing to remove")
+                _print_roster(root)
+            elif args.action == "clear":
+                if not args.all_:
+                    sys.exit("board agent clear needs --all: it empties the whole roster")
+                removed = roster_clear(root)
+                print("removed %s" % ", ".join(removed) if removed else "nothing to remove")
+            else:
+                _print_roster(root)
         elif args.cmd == "serve":
             serve(root, args.port)
     except (KeyError, ValueError, RuntimeError, OSError) as exc:
