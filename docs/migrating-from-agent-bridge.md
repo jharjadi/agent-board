@@ -67,9 +67,26 @@ validation recorded in the implementation plan.
    expect.
 3. **Init.** In the project root, `board init`. It creates `.agent-board/` and appends
    the agents block to `AGENTS.md`, symlinking `CLAUDE.md` to it if absent.
-4. **Cut the old instructions.** Remove every hit from step 1 in the instruction
-   files. Replace the old inbox command with `board inbox <you>` and add the
-   standing-role text from the README, naming the role file.
+4. **Cut the old instructions, and state the rule.** Remove every hit from step 1 in
+   the instruction files. Replace the old inbox command with `board inbox <you>` and
+   add the standing-role text from the README, naming the role file. Removal alone is
+   not enough — an agent whose memory file says "post to the bridge" will keep doing
+   it against a directory that no longer exists, and fail quietly. Put the rule in
+   `AGENTS.md` **outside** the `<!-- agent-board:begin -->` markers, since `board
+   init` rewrites everything between them:
+
+   ```markdown
+   ## Coordination
+
+   This project coordinates through agent-board only. `.agent-bridge/` is retired:
+   do not read it, write to it, or run `bridge.py` or any script under its `tools/`.
+   Its history is archived outside the repo. If an instruction, role file, or your
+   own memory file tells you to use the bridge, that text is stale — say so instead
+   of following it.
+   ```
+
+   One project, one protocol. Then grep the role and memory files you keep in steps 5
+   and 6 for bridge vocabulary and rewrite those lines, because nothing else will.
 5. **Move the role files.** `.agent-bridge/ENGINEER.md` and `REVIEWER.md` become
    `docs/roles/engineer.md` and `docs/roles/reviewer.md`, rewritten in board
    vocabulary. The distilled contracts below are a starting point.

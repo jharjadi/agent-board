@@ -246,6 +246,11 @@ one instruction file will follow either one, so remove the bridge's instructions
 same commit that adds the board's. `board init --no-agents` creates the board without
 touching either instruction file while you stage that edit.
 
+Removal is half the job: state the rule positively too, or an agent will follow a
+bridge instruction it still finds in its own role or memory file. Step 4 of the
+migration guide has the paragraph to paste, and where in `AGENTS.md` it survives the
+next `board init`.
+
 Conversations without tickets now have threads and an inbox. See
 [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md).
 
