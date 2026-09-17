@@ -9,13 +9,24 @@ No dependencies. Python 3.11+.
 
 ## Install
 
+Needs Python 3.11+. On macOS `python3` is often 3.9; the `board` launcher scans
+`python3.14` down to `python3.11` and refuses to run on anything older, so if
+`python3.14 -V` fails, install one first (`brew install python@3.14`).
+
 ```bash
 git clone https://github.com/jharjadi/agent-board.git
 ln -s "$PWD/agent-board/board" ~/.local/bin/board   # or /usr/local/bin
+board --help                                        # verify it resolves
 ```
 
+`~/.local/bin` must be on your `PATH`, and the line that puts it there belongs in
+`.zprofile` or `.zshenv`, **not** `.zshrc`. cmux and Codex start agents through login
+shells, which never read `.zshrc`: an agent in a pane then cannot find `board` while
+your own terminal can.
+
 Nothing is ever copied into your projects. Install once; each project gets only its
-own `.agent-board/` state.
+own `.agent-board/` state. To check the install on a new machine, run the suite once
+in the checkout: `python3.14 -m unittest discover -s tests -q`.
 
 ## Upgrade an existing project
 
@@ -226,6 +237,14 @@ has a home here or a reason it does not, and the two role files and two memory f
 the bridge grew are worth keeping in your project as they are. The steps, the mapping,
 and the distilled role contracts are in
 [`docs/migrating-from-agent-bridge.md`](docs/migrating-from-agent-bridge.md).
+
+Installing the board disturbs nothing: `.agent-bridge/` is a different directory, and
+the board writes only `.agent-board/` plus a delimited block in `AGENTS.md` and
+`CLAUDE.md`. So install first and cut over per project afterwards. The collision is
+instructional rather than on disk — an agent that reads two coordination protocols in
+one instruction file will follow either one, so remove the bridge's instructions in the
+same commit that adds the board's. `board init --no-agents` creates the board without
+touching either instruction file while you stage that edit.
 
 Conversations without tickets now have threads and an inbox. See
 [`docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md`](docs/superpowers/specs/2026-09-05-threads-and-inbox-design.md).
