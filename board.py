@@ -456,6 +456,11 @@ consistently. If the user has not told you which column is yours, ask, or take
 the top of `todo`. Read the ticket before starting, and report with
 `board comment` rather than only in chat, so the next agent sees what you did.
 
+Once the human assigns your agent name, establish the current session coordinates
+with `cmux identify` or `$CMUX_WORKSPACE_ID` and `$CMUX_SURFACE_ID`. Surface refs
+are ephemeral: never store them in `.agent-board/agents`, whose stable fields are
+the agent name and role only.
+
 Talking to another agent: add `--to <them>` and `--ask` to `board comment` or
 `board thread` when you need an answer. Answer with `--re <n>`, listing every
 message number you are answering, and add `--ask` again if your answer needs
@@ -467,9 +472,17 @@ or `-` to read stdin.
 The inbox also shows answers to your asks until you post again in that file.
 Reading the file alone does not acknowledge an answer.
 
-After you post, nudge the recipient yourself if you know its pane, for example
-with `cmux send`. The board never notifies anyone, and the nudge must carry no
-content: the message is in the file.
+After every post addressed to another agent, resolve the recipient's current
+surface with `cmux tree --all`, matching both the agent name and this project's
+workspace. Never reuse a remembered surface number. Send a visible, submitted
+pointer line:
+
+    cmux send --workspace <workspace> --surface <surface> \\
+      "Please check agent-board <ticket-or-thread ID>.\\r"
+
+The pointer must contain no task details; the message stays in the board file.
+Never use blank input, Enter-only nudges, `trigger-flash`, or notification-only
+nudges: they are not reliably visible.
 %s""" % (AGENTS_BEGIN, AGENTS_END)
 
 def _upsert_block(path: str, block: str) -> None:

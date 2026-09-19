@@ -682,6 +682,20 @@ class TestAgentsDoc(unittest.TestCase):
         for needle in ("board inbox", "board thread", "--re", "--ask", "--body-file", "nudge"):
             self.assertIn(needle, text, needle)
 
+    def test_block_requires_a_visible_submitted_board_pointer(self):
+        board.write_agents_doc(self.base)
+        text = self.read("AGENTS.md")
+        for needle in (
+            "cmux identify",
+            "cmux tree --all",
+            "cmux send --workspace <workspace> --surface <surface>",
+            r'"Please check agent-board <ticket-or-thread ID>.\r"',
+            "Never reuse a remembered surface number.",
+            "Never use blank input, Enter-only nudges",
+        ):
+            self.assertIn(needle, text, needle)
+        self.assertNotIn("if you know its pane", text)
+
 class TestRefreshAndPort(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

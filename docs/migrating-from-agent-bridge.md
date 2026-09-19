@@ -234,17 +234,18 @@ relying on it. Claude Code has the equivalent in its permission settings.
 
 Tell the reviewer once:
 
-> After you have posted the verdict **and** moved the ticket, run `cmux send
-> --workspace <ws> --surface <surface> "<project>: ticket N reviewed by codex"` and
-> then `cmux send-key --workspace <ws> --surface <surface> enter`. Do not put your
-> answer in the nudge; the board carries it.
+> After you have posted the verdict **and** moved the ticket, run `cmux tree
+> --all` and match both the recipient's agent name and this project's workspace.
+> Then submit `cmux send --workspace <workspace> --surface <surface> "Please
+> check agent-board <ticket-or-thread ID>.\r"`. Do not put your answer in the
+> nudge; the board carries it.
 
 Nudge after both actions, or the engineer reads the comment before the move and sees
-a ticket still in `review`. Name the project, because the same engineer may be
-running two. Find the target with `cmux identify --json` in the engineer's pane.
-Reported: Codex ran both commands from inside its `workspace-write` sandbox and the
-nudge arrived as a user turn in Claude's session. A successful send says the text was
-delivered to the pane, not that the agent acted on it; the board says that.
+a ticket still in `review`. Use `cmux identify` to establish the current pane's refs
+and `cmux tree --all` to find the recipient. Never reuse a remembered surface number.
+Blank input, an Enter-only send, a flash, or a notification can report success
+without visibly reaching the recipient. A successful submitted pointer says the
+text was delivered to the pane, not that the agent acted on it; the board says that.
 
 ### Headless reviewer, when there is no pane
 

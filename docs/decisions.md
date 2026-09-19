@@ -166,3 +166,19 @@ supersession and not a clarification.
 | `init` seeds only when it creates the board | Rerunning `init` is the documented upgrade path and must not declare agents that may not exist on that project. `--no-agents` seeds nothing. |
 | `clear` requires `--all` | An omitted argument meaning "wipe everything" is a footgun. `remove` takes several names and covers what a human actually does. |
 | No minimum agent count | A one-agent board with a human reviewer is valid. |
+
+## 2026-09-19 — nudges must be visible and submitted
+
+The original generated block said only to use `cmux send` and keep the nudge
+content-free. In a live recovery, a blank send, an Enter-only send,
+`trigger-flash`, and a targeted notification all reported success while the human
+observed no nudge in the recipient's terminal. A submitted pointer line was the
+first mechanism that arrived visibly.
+
+| Ruling | Why |
+|---|---|
+| The generated block gives one complete `cmux send` command ending in `\r` | Text without submission can sit invisibly in the input buffer. A separate Enter step is easy to omit and had already failed operationally. |
+| The visible text is only `Please check agent-board <ticket-or-thread ID>.` | It is enough to direct the recipient while keeping task details in the inspectable board file. |
+| Resolve the recipient with `cmux tree --all`, matching agent name and project workspace | Surface numbers change between sessions, and the same agent name may exist in several workspaces. |
+| `cmux identify` establishes the current session coordinates; no coordinates are stored in the roster | The roster remains a human-maintained name/role map, not the rejected runtime registry or presence system. |
+| Blank, Enter-only, flash, and notification-only nudges are prohibited | Their transport reporting success did not make them visible to the human or recipient terminal. |

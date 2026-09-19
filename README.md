@@ -149,17 +149,18 @@ From then on "Anything in review?" is the whole handoff.
 ### The reviewer nudges back
 
 The agent that posts is the one that knows something changed, so it does the
-nudging. Tell it once where you are:
+nudging. Resolve the target each time rather than teaching an agent a surface
+number that will go stale:
 
-> After you have posted the verdict and moved the ticket, run `cmux send --workspace
-> <ws> --surface <surface> "<project>: ticket N reviewed by codex"`, then `cmux
-> send-key ... enter`. Do not put your answer in the nudge; the board carries it.
+> After you have posted the verdict and moved the ticket, run `cmux tree --all`
+> and match both the recipient's agent name and this project's workspace. Then
+> submit `cmux send --workspace <workspace> --surface <surface> "Please check
+> agent-board <ticket-or-thread ID>.\r"`. Do not put your answer in the nudge;
+> the board carries it.
 
 Nudge after both actions, or the other agent reads a verdict on a ticket still in
-`review`. Name the project, because one engineer may be running two. In the
-rehearsal Codex ran that from inside its sandbox and the nudge arrived as a user turn
-in the other agent's session; no human relayed anything. `cmux identify --json` in a
-pane tells you its refs.
+`review`. Use `cmux identify` to establish the current pane's refs and `cmux tree
+--all` to find the recipient. Never reuse a remembered surface number.
 
 ### Launching an agent in a pane
 
@@ -177,15 +178,18 @@ added to its writable roots. The login shell reads `.zprofile`, not `.zshrc`; if
 
 ### Auto-nudge (optional)
 
-So you never have to say "check the board":
+So you never have to say "check the board", first resolve the target and set
+`WORKSPACE` and `SURFACE` for the current session:
 
 ```bash
-board watch review | while read -r line; do
-  cmux send --surface "$SURFACE" "Board changed: $line. Run: board list review"
-  cmux send-key --surface "$SURFACE" Enter
+board watch review | while read -r _; do
+  cmux send --workspace "$WORKSPACE" --surface "$SURFACE" \
+    "Please check agent-board review.\r"
 done
 ```
 
+Use one visible, submitted `cmux send`. Blank input, an Enter-only send, a flash,
+or a notification can report success without visibly reaching the recipient.
 Keep nudges content-free — the payload belongs in the ticket, which is inspectable
 and version-controlled. An agent running with `--yolo` or
 `--dangerously-skip-permissions` cannot tell injected keystrokes from the human
