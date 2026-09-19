@@ -341,6 +341,7 @@ the human typing.
 ```
 board-jira status            # config, panes, idleness, ready tickets
 board-jira once --dry-run    # show what it would nudge
+board-jira seed              # adopt the existing backlog without nudging it
 board-jira watch             # loop; run in its own surface
 board-jira inbox <agent>     # what a nudged agent runs
 ```

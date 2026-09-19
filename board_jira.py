@@ -323,6 +323,28 @@ def cmd_init(args):
     print("Surfaces: cmux tree")
 
 
+def cmd_seed(cfg):
+    """Adopt everything currently ready as already-nudged, without nudging.
+
+    Turning a poller on in a workspace with a standing backlog would otherwise
+    nudge every open ticket at once. Seeding draws a line under the existing pile;
+    only tickets that arrive (or re-enter a ready status) afterwards will fire.
+    Note this also suppresses the backlog permanently, so read it first.
+    """
+    state = load_state()
+    now = time.time()
+    for agent in sorted(cfg["agents"]):
+        tickets, err = ready_tickets(cfg, agent)
+        if err:
+            print("%s: SKIP (%s)" % (agent, err))
+            continue
+        state[agent] = {t["key"]: now for t in tickets}
+        print("%s: seeded %d (%s)" % (agent, len(tickets),
+                                      ", ".join(t["key"] for t in tickets) or "none"))
+    save_state(state)
+    print("seeded -- these will not nudge until they leave and re-enter a ready status")
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -339,6 +361,8 @@ def main():
         cmd_inbox(cfg, args[1])
     elif mode == "status":
         cmd_status(cfg)
+    elif mode == "seed":
+        cmd_seed(cfg)
     elif mode == "once":
         do_pass(cfg, dry_run="--dry-run" in args)
     elif mode == "watch":
