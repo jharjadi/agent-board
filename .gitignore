@@ -12,3 +12,6 @@ mock-project/
 
 # Generated from the article by docs/blog/build_preview.py; 400KB+ of base64.
 docs/blog/preview.html
+
+# Local isolated feature worktrees.
+.worktrees/
