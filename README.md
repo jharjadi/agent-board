@@ -320,3 +320,54 @@ the design, not a backlog. If you need it to work differently, forking a single
 dependency-free file is genuinely the easier path.
 
 MIT licensed.
+
+## board-jira — optional Jira poller
+
+`board` itself stays dependency-free and knows nothing about Jira. `board-jira` is a
+separate command in this repo for workspaces that track work in Jira; install it the
+same way and ignore it everywhere else.
+
+```bash
+ln -s "$PWD/agent-board/board-jira" ~/.local/bin/board-jira
+cd ~/your/workspace && board-jira init JP     # writes .agent-board/jira.json
+```
+
+It **nudges a live agent pane; it never wakes a new agent**. The agent in the pane
+already has the right cwd, model, profile and context, so none of that has to be
+passed in. The nudge is content-free — a command to run, never ticket text, because
+keystrokes sent to a pane bypass every approval prompt and are indistinguishable from
+the human typing.
+
+```
+board-jira status            # config, panes, idleness, ready tickets
+board-jira once --dry-run    # show what it would nudge
+board-jira watch             # loop; run in its own surface
+board-jira inbox <agent>     # what a nudged agent runs
+```
+
+Config lives at `.agent-board/jira.json`, state at `.agent-board/.jira-seen.json`
+(gitignore it). No secrets: `creds_env` points at one shared `.env` holding
+`<key>_EMAIL` / `<key>_API_KEY`, so pollers never accumulate copies of tokens.
+
+**A pane label is not a Jira identity.** Panes are called `omp-foodlegal-claude`,
+`claude-P`, and so on, while Jira has one account per agent. Set `creds` on each agent
+to the `.env` prefix it authenticates as:
+
+```json
+"agents": {
+  "omp-nationaltraining-claude": { "surface": "surface:19", "creds": "omp-personal-claude" }
+}
+```
+
+Behaviour worth knowing:
+
+- Routes by **Jira assignee**, which is single-valued, so two agents can never be
+  nudged for the same ticket.
+- Watches **To Do** (new work) and **In Review** (agent-to-agent handoff).
+- **Fails closed on idle**: any uncertainty about the pane means no nudge.
+- **A nudge is not an acknowledgement.** State records *when* each ticket was nudged
+  and repeats after `renudge_seconds` while the ticket is still ready. Recording only
+  "nudged once" silently strands any ticket the agent missed.
+
+Surfaces come from `cmux tree` and change when panes are recreated; `board-jira
+status` is where that shows up.
